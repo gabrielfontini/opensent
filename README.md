@@ -14,6 +14,7 @@ OpenSENT puts the whole workflow on one WeAct STM32H750 core board and a USB cab
 | **Raw capture** | Two-edge capture of a SENT line, exported as VCD/CSV for PulseView. |
 | **PulseView decoder** | A SENT protocol decoder for sigrok / PulseView (libsigrokdecode does not ship one). |
 | **SENT → analog bridge** | Maps a decoded fast channel to a DAC voltage (0–3.3 V, scalable to 0–5 V), with a fail-safe voltage on sensor loss. It lets an aftermarket ECU read a SENT-only sensor. The output is measured back on chip. |
+| **Sensor health report** | `opensent report` turns a capture (from the board or a logic-analyzer file) into an HTML page. It covers tick accuracy and jitter, nibble timing margin, low time, frame rate, error breakdown, signal plots, and the serial messages with their usual J2716 meaning. |
 | **Tools** | Python CLI and library, an offline decoder for logic-analyzer exports, a Web Serial console (no install), and a host simulator for development without hardware. |
 
 ![Web console (demo mode)](docs/img/web-console.png)
@@ -116,6 +117,15 @@ Decode a logic-analyzer export (Saleae CSV or VCD) with no hardware:
 ```bash
 opensent decode capture.csv --errors
 ```
+
+Get a health report of a sensor (live, or from a capture file):
+
+```bash
+opensent report --ch 0 -o throttle.html
+opensent report tests/data/vag_04e.906.051.csv -o vag.html
+```
+
+![Sensor report](docs/img/report-vag-map.png)
 
 Capture a real line and open it in PulseView:
 

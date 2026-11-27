@@ -105,3 +105,14 @@ def test_python_matches_c_core(cap):
     ok_py = [x for x in py_frames if x[0] == "OK"]
     assert ok_py == ok_c
     assert len(py_frames) == len(c_frames)
+
+
+@pytest.mark.parametrize("cap", CAPTURES[:2])
+def test_report_renders(cap, tmp_path):
+    from opensent import report
+    out = tmp_path / "r.html"
+    a = report.report_from_file(os.path.join(DATA, cap), str(out))
+    html = out.read_text()
+    assert a["frames"] > 50 and "tick_mean" in a
+    assert "<svg" not in html  # charts are drawn client-side from the embedded JSON
+    assert '"series"' in html and "Findings" in html

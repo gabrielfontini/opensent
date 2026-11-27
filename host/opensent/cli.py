@@ -12,6 +12,7 @@
   opensent synth out.vcd --fc1 ...      synthesize a SENT waveform file
   opensent convert in.csv out.vcd       CSV edge list -> VCD (PulseView)
   opensent capture --ch 0 -o x.vcd      raw two-edge capture on the instrument
+  opensent report capture.csv -o r.html sensor health report (or live: --ch 0)
   opensent sim                          start the host simulator (pty)
 
 SPDX-License-Identifier: MIT
@@ -289,6 +290,26 @@ def cmd_capture(args) -> int:
     return 0
 
 
+def cmd_report(args) -> int:
+    from . import report
+    kw = dict(nibbles=args.nibbles, fmt=args.fmt)
+    if args.file:
+        a = report.report_from_file(args.file, args.out, title=args.title, invert=args.invert, **kw)
+    else:
+        with _dev(args) as d:
+            level0, clk, times = d.capture(args.ch, args.edges)
+        fall = times[0::2] if level0 else times[1::2]
+        rise = times[1::2] if level0 else times[2::2]
+        a = report.analyze(fall, rise, **kw)
+        with open(args.out, "w") as fp:
+            fp.write(report.render(a, args.title or "RX%d live capture" % args.ch,
+                                   "instrument RX%d, %d edges" % (args.ch, len(times))))
+    for lvl, t in a["verdict"]:
+        print("[%s] %s" % (lvl.upper(), t))
+    print("report written to %s" % args.out)
+    return 0
+
+
 def cmd_convert(args) -> int:
     """CSV (time,level) edge list -> VCD, e.g. to open captures in PulseView"""
     levels = []
@@ -427,6 +448,17 @@ def main(argv=None) -> int:
     p.add_argument("--edges", type=int, default=4000)
     p.add_argument("-o", "--out")
     p.set_defaults(fn=cmd_capture)
+
+    p = sub.add_parser("report", help="sensor health report (HTML) from a capture file or the instrument")
+    p.add_argument("file", nargs="?", help="CSV/VCD capture; omit to capture from the instrument")
+    p.add_argument("-o", "--out", default="sent-report.html")
+    p.add_argument("--ch", type=int, default=0)
+    p.add_argument("--edges", type=int, default=8000)
+    p.add_argument("--nibbles", type=int, default=0)
+    p.add_argument("--fmt", default="12_12", choices=list(codec.FORMATS))
+    p.add_argument("--invert", action="store_true")
+    p.add_argument("--title")
+    p.set_defaults(fn=cmd_report)
 
     p = sub.add_parser("convert", help="convert a CSV edge list to VCD (for PulseView)")
     p.add_argument("inp")
