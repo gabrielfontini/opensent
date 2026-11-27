@@ -11,4 +11,5 @@ First release. Everything below was verified on a WeAct STM32H750VBT6 by `opense
 - **SENT → CAN gateway** (FDCAN1) with a valid flag, error count, counter and data age.
 - **Standalone startup script** in the on-board QSPI flash; 0.5 s hardware watchdog.
 - **16-channel logic analyzer** on a second USB port (SUMP/OLS protocol for sigrok/PulseView), up to 33.3 MS/s, 128 K samples, parallel trigger.
+- **MCP server** (`opensent-mcp`): 10 tools for AI agents to drive and verify the instrument.
 - **PC tools:** Python codec (frame-identical to the C core), CLI, HTML sensor health report, Web Serial console with an in-page demo, host simulator.

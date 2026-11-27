@@ -17,6 +17,7 @@ OpenSENT puts the whole workflow on one WeAct STM32H750 core board and a USB cab
 | **SENT → analog bridge** | Maps a decoded fast channel to a DAC voltage (0–3.3 V, scalable to 0–5 V), with a fail-safe voltage on sensor loss. It lets an aftermarket ECU read a SENT-only sensor. The output is measured back on chip. |
 | **Standalone mode** | A startup script stored in the board's QSPI flash brings the bridge, gateway or emulator up at power-on without a PC. A 0.5 s hardware watchdog turns every output off if the firmware ever hangs. |
 | **Sensor health report** | `opensent report` turns a capture (from the board or a logic-analyzer file) into an HTML page. It covers tick accuracy and jitter, nibble timing margin, low time, frame rate, error breakdown, signal plots, and the serial messages with their usual J2716 meaning. |
+| **AI-agent ready** | An MCP server (`opensent-mcp`) lets Claude or any MCP client emulate sensors, inject faults, read decoders, run reports and the self test on the real board. The agent then *verifies* what it configured instead of assuming it worked. |
 | **Tools** | Python CLI and library, an offline decoder for logic-analyzer exports, a Web Serial console (no install), and a host simulator for development without hardware. |
 
 ![Web console (demo mode)](docs/img/web-console.png)
@@ -151,6 +152,13 @@ Use it as a 16-channel logic analyzer in PulseView (Openbench Logic Sniffer driv
 
 ```bash
 sigrok-cli -d ols:conn=/dev/ttyACM1 --config samplerate=10m --samples 100000 -P sent:data=10 -A sent=fc1
+```
+
+Let an AI agent drive it (Model Context Protocol, stdio):
+
+```bash
+claude mcp add opensent -- opensent-mcp
+# "emulate a throttle sweeping 10-90 % at 2 Hz, inject 5 CRC errors and confirm the receiver caught exactly 5"
 ```
 
 Open `web/index.html` in Chrome or Edge, then click **Connect device**, or click **Demo** to try it without hardware.
