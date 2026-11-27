@@ -1,0 +1,47 @@
+name: CI
+on: [push, pull_request]
+
+jobs:
+  native:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Real sensor captures (rusEFI test vectors)
+        run: tools/fetch_captures.sh
+      - name: Core unit tests
+        run: |
+          cmake -S tests -B build-native
+          cmake --build build-native
+          ./build-native/test_sent tests/data
+      - name: Simulator
+        run: cmake -S firmware/sim -B build-sim && cmake --build build-sim
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - name: Python tests (codec vs C core, self test on the simulator)
+        run: |
+          pip install -e host pytest
+          pytest -q host/tests
+      - name: sigrok decoder smoke test
+        run: |
+          sudo apt-get update && sudo apt-get install -y sigrok-cli
+          opensent synth /tmp/s.vcd --frames 60 --slow ENH12 --msg 0x23=786 --timescale 100
+          SIGROKDECODE_DIR=$PWD/sigrok sigrok-cli -i /tmp/s.vcd -I vcd -P sent | tee /tmp/ann.txt | head
+          grep -q "ENH12 serial ID 0x23 = 786" /tmp/ann.txt
+
+  firmware:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: sudo apt-get update && sudo apt-get install -y gcc-arm-none-eabi ninja-build
+      - name: Build STM32H750 firmware
+        run: |
+          cmake -S firmware/h750 -B build-h750 -G Ninja
+          cmake --build build-h750
+      - uses: actions/upload-artifact@v4
+        with:
+          name: opensent-h750
+          path: |
+            build-h750/opensent.bin
+            build-h750/opensent.hex
+            build-h750/opensent.elf

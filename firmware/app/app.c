@@ -735,22 +735,7 @@ static err_t cmd_rx(cmd_t *c, const char *sub)
         memset(&CAP, 0, sizeof CAP - sizeof CAP.d);
         CAP.ch = (uint8_t)ch;
         CAP.target = u;
-        /* drain pending timestamps, then switch to both edges */
-        uint32_t tmp[64], ovr;
-        while (hw_rx_read(ch, tmp, 64, &ovr)) {
-        }
-        bool l1, l2;
-        do {
-            l1 = hw_rx_pin(ch);
-            hw_rx_both_edges(ch, true, x->inv);
-            l2 = hw_rx_pin(ch);
-            if (l1 != l2) {
-                hw_rx_both_edges(ch, false, x->inv);
-                while (hw_rx_read(ch, tmp, 64, &ovr)) {
-                }
-            }
-        } while (l1 != l2);
-        CAP.level0 = l1;
+        CAP.level0 = hw_rx_both_edges(ch, true, x->inv);
         CAP.active = true;
         return E_OK;
     } else if (ieq(sub, "PULLTEST")) {

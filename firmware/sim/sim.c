@@ -94,7 +94,7 @@ void hw_tx_start(sent_tx_t *t)
 }
 
 void hw_tx_stop(void) { tx = NULL; line_level = true; }
-void hw_rx_both_edges(unsigned ch, bool b, bool inv) { (void)inv; if (ch < HW_RX_CHANNELS) both[ch] = b; }
+bool hw_rx_both_edges(unsigned ch, bool b, bool inv) { (void)inv; if (ch < HW_RX_CHANNELS) { both[ch] = b; head[ch] = tail[ch] = 0; } return true; }
 bool hw_rx_pin(unsigned ch) { (void)ch; return line_level; }
 
 void hw_rx_enable(unsigned ch, bool en, bool invert)

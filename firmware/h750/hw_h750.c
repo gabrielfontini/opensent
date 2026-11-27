@@ -399,26 +399,57 @@ void hw_rx_enable(unsigned ch, bool en, bool invert)
     }
 }
 
-void hw_rx_both_edges(unsigned ch, bool both, bool invert)
+static bool pin_level(unsigned ch);
+
+bool hw_rx_both_edges(unsigned ch, bool both, bool invert)
 {
+    bool l1 = false, l2 = true;
     if (ch < 2) {
+        uint32_t e = ch == 0 ? TIM_CCER_CC1E : TIM_CCER_CC2E;
         uint32_t p = ch == 0 ? TIM_CCER_CC1P : TIM_CCER_CC2P;
         uint32_t np = ch == 0 ? TIM_CCER_CC1NP : TIM_CCER_CC2NP;
-        TIM5->CCER &= ~(p | np);
-        TIM5->CCER |= both ? (p | np) : (invert ? 0u : p);
-    } else if (ch == 2) {
-        EXTI->FTSR1 &= ~(1u << 10);
-        EXTI->RTSR1 &= ~(1u << 10);
-        if (both || !invert) {
+        if (!both) {
+            TIM5->CCER = (TIM5->CCER & ~(p | np)) | (invert ? 0u : p);
+            return pin_level(ch);
+        }
+        /* arm atomically: capture off, ring flushed, level read, capture on;
+         * retry if an edge slipped in between */
+        do {
+            TIM5->CCER &= ~(e | p | np);
+            rx_dma_start(ch);
+            l1 = pin_level(ch);
+            TIM5->CCER |= p | np | e;
+            l2 = pin_level(ch);
+        } while (l1 != l2);
+        return l1;
+    }
+    EXTI_D1->IMR1 &= ~(1u << 10);
+    EXTI->FTSR1 &= ~(1u << 10);
+    EXTI->RTSR1 &= ~(1u << 10);
+    if (!both) {
+        if (invert) {
+            EXTI->RTSR1 |= 1u << 10;
+        } else {
             EXTI->FTSR1 |= 1u << 10;
         }
-        if (both || invert) {
-            EXTI->RTSR1 |= 1u << 10;
-        }
+        EXTI_D1->PR1 = 1u << 10;
+        EXTI_D1->IMR1 |= 1u << 10;
+        return pin_level(ch);
     }
+    do {
+        EXTI_D1->IMR1 &= ~(1u << 10);
+        mon_head = mon_tail = 0;
+        l1 = pin_level(ch);
+        EXTI->FTSR1 |= 1u << 10;
+        EXTI->RTSR1 |= 1u << 10;
+        EXTI_D1->PR1 = 1u << 10;
+        EXTI_D1->IMR1 |= 1u << 10;
+        l2 = pin_level(ch);
+    } while (l1 != l2);
+    return l1;
 }
 
-bool hw_rx_pin(unsigned ch)
+static bool pin_level(unsigned ch)
 {
     if (ch == 0) {
         return (GPIOA->IDR >> 0) & 1u;
@@ -427,6 +458,11 @@ bool hw_rx_pin(unsigned ch)
         return (GPIOA->IDR >> 1) & 1u;
     }
     return (GPIOB->IDR >> 10) & 1u;
+}
+
+bool hw_rx_pin(unsigned ch)
+{
+    return pin_level(ch);
 }
 
 unsigned hw_rx_read(unsigned ch, uint32_t *ts, unsigned max, uint32_t *overruns)
@@ -546,6 +582,13 @@ void hw_poll(void)
 /* called first thing in main(), before any clock or peripheral setup */
 void hw_early(void)
 {
+    /* Started by another program (e.g. the ROM bootloader after a DFU
+     * "leave") instead of a reset: clocks, NVIC and VTOR are not in reset
+     * state. A clean reset is the robust way out; it boots this firmware. */
+    if ((RCC->CFGR & RCC_CFGR_SWS) != 0u /* SYSCLK not HSI */ && s_boot_magic != BOOT_MAGIC) {
+        NVIC_SystemReset();
+    }
+    SCB->VTOR = 0x08000000u;
     if (s_boot_magic == BOOT_MAGIC) {
         s_boot_magic = 0;
         uint32_t sp = *(volatile uint32_t *)SYSMEM_BOOT;
