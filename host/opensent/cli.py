@@ -9,6 +9,7 @@
   opensent selftest [--jumper]          end-to-end hardware verification
   opensent decode capture.csv|.vcd      offline decoder (no hardware)
   opensent synth out.vcd --fc1 ...      synthesize a SENT waveform file
+  opensent convert in.csv out.vcd       CSV edge list -> VCD (PulseView)
   opensent sim                          start the host simulator (pty)
 
 SPDX-License-Identifier: MIT
@@ -233,6 +234,25 @@ def cmd_synth(args) -> int:
     return 0
 
 
+def cmd_convert(args) -> int:
+    """CSV (time,level) edge list -> VCD, e.g. to open captures in PulseView"""
+    levels = []
+    prev = None
+    with open(args.inp) as fp:
+        for line in fp:
+            parts = line.replace(" ", "").split(",")
+            try:
+                t, v = float(parts[0]), int(float(parts[1]))
+            except (ValueError, IndexError):
+                continue
+            if v != prev:
+                levels.append((t, v))
+                prev = v
+    codec.write_vcd(args.out, levels, timescale_ns=args.timescale)
+    print("wrote %d transitions to %s" % (len(levels), args.out))
+    return 0
+
+
 def _find_sim() -> str:
     here = os.path.dirname(os.path.abspath(__file__))
     for cand in (os.path.join(here, "..", "..", "build-sim", "opensent-sim"), shutil.which("opensent-sim") or ""):
@@ -338,6 +358,12 @@ def main(argv=None) -> int:
     p.add_argument("--msg", action="append")
     p.add_argument("--timescale", type=int, default=10, help="VCD timescale in ns")
     p.set_defaults(fn=cmd_synth)
+
+    p = sub.add_parser("convert", help="convert a CSV edge list to VCD (for PulseView)")
+    p.add_argument("inp")
+    p.add_argument("out")
+    p.add_argument("--timescale", type=int, default=50, help="VCD timescale in ns")
+    p.set_defaults(fn=cmd_convert)
 
     p = sub.add_parser("sim", help="run the host simulator behind a pty")
     p.add_argument("--link", default="/tmp/opensent-sim")
