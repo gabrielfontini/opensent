@@ -57,5 +57,7 @@ bool hw_can_recv(uint32_t *id, uint8_t *d, uint8_t *len);
 void hw_can_status(uint32_t *tec, uint32_t *rec, uint32_t *psr);
 
 void hw_bootloader(void);
+/* hang on purpose to prove the watchdog resets the board; false if unsupported */
+bool hw_watchdog_test(void);
 
 #endif

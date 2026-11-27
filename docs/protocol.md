@@ -33,6 +33,7 @@ The instrument shows up as a USB CDC serial port; the baud rate does not matter.
 | `HELP?` | comma-separated command list |
 | `PINS?` | pin map of this board |
 | `SYST:ERR?` | last error (`0,"No error"` when none), then clears it |
+| `SYST:WDTEST` | hangs the firmware on purpose: the 0.5 s independent watchdog must reset the board, and every output comes back off / 0 V (no reply) |
 | `SYST:BOOT` | reboots into the STM32 ROM DFU bootloader (USB firmware update without ST-Link) |
 
 ## Transmitter (sensor emulator)

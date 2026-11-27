@@ -1068,7 +1068,7 @@ static err_t execute(char *s)
         return E_OK;
     }
     if (ieq(c.hdr, "HELP") && c.query) {
-        outf("*IDN?,*RST,*OPC?,HELP?,PINS?,SYST:ERR?,SYST:BOOT,STREAM[?],"
+        outf("*IDN?,*RST,*OPC?,HELP?,PINS?,SYST:ERR?,SYST:BOOT,SYST:WDTEST,STREAM[?],"
              "TX:STATE[?],TX:TICK[?],TX:LOW[?],TX:NIB[?],TX:CRC[?],TX:FMT[?],TX:STATUS[?],TX:FC1[?],TX:FC2[?],"
              "TX:WAVE[?],TX:RAW[?],TX:PAUSE[?],TX:SLOW[?],TX:SLOW:ADD,TX:SLOW:CLR,TX:FAULT[?],TX:DRIVE[?],TX:INFO?,"
              "RXn:STATE[?],RXn:POL[?],RXn:TICK[?],RXn:NIB[?],RXn:CRC[?],RXn:FMT[?],RXn:PAUSE[?],RXn:CLR,"
@@ -1085,6 +1085,9 @@ static err_t execute(char *s)
         outf("%d,\"%s\"", S.last_err, err_text((err_t)S.last_err));
         S.last_err = 0;
         return E_OK;
+    }
+    if (ieq(c.hdr, "SYST:WDTEST")) {
+        return hw_watchdog_test() ? E_OK : E_UNDEF;
     }
     if (ieq(c.hdr, "SYST:BOOT")) {
         hw_bootloader();

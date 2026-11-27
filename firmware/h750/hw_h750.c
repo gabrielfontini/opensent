@@ -192,6 +192,7 @@ void hw_write(const char *s, unsigned n)
         s += w;
         n -= w;
         if (n) {
+            IWDG1->KR = 0xAAAAu;
             tud_cdc_write_flush();
             tud_task();
             if (s_ms - t0 > 50u) {
@@ -562,6 +563,7 @@ bool hw_rx_pulltest(unsigned ch, sent_tx_t *gen, unsigned frames)
         }
         GPIOA->PUPDR = (GPIOA->PUPDR & ~mask) | up;
         __enable_irq();
+        IWDG1->KR = 0xAAAAu;
         for (volatile uint32_t d = 0; d < 20000u; d++) { /* ~ 100 us gap: pause */
         }
     }
@@ -680,8 +682,32 @@ void hw_bootloader(void)
     s_boot_at = s_ms + 100u; /* let the reply go out first (see hw_poll) */
 }
 
+/* Independent watchdog, ~0.5 s: if the firmware ever hangs, the chip
+ * resets and every output (TX, bridge DACs, CAN) comes back off / 0 V
+ * instead of freezing on the last value. Paused while a debugger halts. */
+static void iwdg_start(void)
+{
+    DBGMCU->APB4FZ1 |= DBGMCU_APB4FZ1_DBG_IWDG1;
+    IWDG1->KR  = 0xCCCCu;
+    IWDG1->KR  = 0x5555u;
+    IWDG1->PR  = 3u;    /* LSI 32 kHz / 32 = 1 kHz */
+    IWDG1->RLR = 500u;  /* 500 ms */
+    while (IWDG1->SR) {
+    }
+    IWDG1->KR = 0xAAAAu;
+}
+
+bool hw_watchdog_test(void)
+{
+    __disable_irq();
+    for (;;) { /* simulated firmware hang: the IWDG must reset the chip */
+    }
+    return true;
+}
+
 void hw_poll(void)
 {
+    IWDG1->KR = 0xAAAAu;
     if (s_boot_at && (int32_t)(s_ms - s_boot_at) >= 0) {
         s_boot_magic = BOOT_MAGIC;
         NVIC_SystemReset();
@@ -758,6 +784,7 @@ void hw_init(void)
     DAC1->DHR12R2 = 0;
     DAC1->CR = DAC_CR_EN1 | DAC_CR_EN2;
     adc_init();
+    iwdg_start();
 
     NVIC_SetPriority(EXTI15_10_IRQn, 0);
     NVIC_SetPriority(DMA1_Stream0_IRQn, 1);

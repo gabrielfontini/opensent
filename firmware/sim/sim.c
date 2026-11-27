@@ -64,6 +64,7 @@ void        hw_tx_drive(bool od) { (void)od; }
 float       hw_dac_max(void) { return 3.3f; }
 void        hw_dac(unsigned ch, float v) { if (ch < HW_DAC_CHANNELS) dac[ch] = v; }
 void        hw_bootloader(void) {}
+bool        hw_watchdog_test(void) { return false; }
 float       hw_dac_meas(unsigned ch) { return ch < HW_DAC_CHANNELS ? dac[ch] : -1.0f; }
 
 void hw_write(const char *s, unsigned n)
