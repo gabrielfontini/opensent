@@ -18,3 +18,14 @@ target_link_libraries(sent_replay sentcore)
 
 enable_testing()
 add_test(NAME sent COMMAND test_sent ${CMAKE_CURRENT_LIST_DIR}/data)
+
+# Fuzzing under sanitizers (gcc/clang): cmake -DSENT_FUZZ=ON
+option(SENT_FUZZ "build the sanitizer fuzz target" OFF)
+if(SENT_FUZZ)
+  add_executable(fuzz_sent fuzz_sent.c ${CORE}/sent_common.c ${CORE}/sent_rx.c ${CORE}/sent_tx.c)
+  target_include_directories(fuzz_sent PRIVATE ${CORE})
+  target_compile_options(fuzz_sent PRIVATE -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all)
+  target_link_options(fuzz_sent PRIVATE -fsanitize=address,undefined)
+  target_link_libraries(fuzz_sent m)
+  add_test(NAME fuzz COMMAND fuzz_sent 3000000)
+endif()

@@ -267,6 +267,7 @@ class Decoder:
     MARGIN = 0.35
     LEARN_VOTES = 3
     CRC_LOCK_VOTES = 4
+    UNLEARN_ERRORS = 8
     SEG_MAX = MAX_DATA + 4
 
     def __init__(self, clk_hz: float = 1e9, tick_ns: float = 0.0, tol_pct: float = 25.0,
@@ -295,6 +296,7 @@ class Decoder:
         self.crc_votes = 0
         self.carry = 0.0
         self.carry_start: Optional[float] = None
+        self.bad_len = self.bad_crc = 0
         self.st = Stats()
         self.slow.reset(True)
         self._last_edge: Optional[float] = None
@@ -406,8 +408,18 @@ class Decoder:
         if f.flags & F_MARGIN:
             st.margin_flags += 1
         if f.err != OK:
+            # forget a length / CRC variant learned from garbage after repeated errors
+            if f.err == E_LENGTH and not self.nibbles:
+                self.bad_len += 1
+                if self.bad_len >= self.UNLEARN_ERRORS:
+                    self.learned_n = self.learn_votes = self.bad_len = 0
+            if f.err == E_CRC and self.crc_mode == CRC_AUTO:
+                self.bad_crc += 1
+                if self.bad_crc >= self.UNLEARN_ERRORS:
+                    self.crc_lock, self.crc_votes, self.bad_crc = -1, 0, 0
             self._lose_lock()
             return f
+        self.bad_len = self.bad_crc = 0
         st.ok += 1
         self.locked = True
         self.prev_sync = self.sync

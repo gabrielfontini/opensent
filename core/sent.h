@@ -186,6 +186,7 @@ typedef struct {
     uint8_t  crc_lock;      /* matched crc mode in AUTO, 0xff = none yet */
     uint8_t  crc_votes;
     uint32_t carry;         /* glitch time carried into the next pulse */
+    uint8_t  bad_len, bad_crc; /* consecutive errors: unlearn after too many */
     sent_rx_stats_t st;
     sent_slow_rx_t  slow;
 } sent_rx_t;

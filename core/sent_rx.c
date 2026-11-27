@@ -26,6 +26,7 @@
 #define MARGIN_TICKS    0.35f   /* |deviation| above this sets SENT_F_MARGIN */
 #define LEARN_VOTES     3u
 #define CRC_LOCK_VOTES  4u
+#define UNLEARN_ERRORS  8u      /* consecutive errors that discard a learned length / CRC */
 #define SEG_MAX         (sizeof(((sent_rx_t *)0)->seg) / sizeof(uint32_t))
 
 void sent_rx_cfg_default(sent_rx_cfg_t *c, uint32_t clk_hz)
@@ -52,6 +53,8 @@ void sent_rx_reset(sent_rx_t *rx)
     rx->crc_lock    = 0xFF;
     rx->crc_votes   = 0;
     rx->carry       = 0;
+    rx->bad_len     = 0;
+    rx->bad_crc     = 0;
     memset(&rx->st, 0, sizeof rx->st);
     sent_slow_rx_reset(&rx->slow, true);
 }
@@ -247,9 +250,22 @@ static void commit(sent_rx_t *rx, sent_frame_t *f)
         rx->st.margin_flags++;
     }
     if (f->err != SENT_OK) {
+        /* garbage (noise at power-up...) may have taught us a wrong frame
+         * length or CRC variant: forget it after repeated errors */
+        if (f->err == SENT_E_LENGTH && !rx->cfg.nibbles && ++rx->bad_len >= UNLEARN_ERRORS) {
+            rx->learned_n = 0;
+            rx->learn_votes = 0;
+            rx->bad_len = 0;
+        }
+        if (f->err == SENT_E_CRC && rx->cfg.crc_mode == SENT_CRC_AUTO && ++rx->bad_crc >= UNLEARN_ERRORS) {
+            rx->crc_lock = 0xFF;
+            rx->crc_votes = 0;
+            rx->bad_crc = 0;
+        }
         lose_lock(rx);
         return;
     }
+    rx->bad_len = rx->bad_crc = 0;
     rx->st.ok++;
     rx->locked    = true;
     rx->prev_sync = rx->sync;

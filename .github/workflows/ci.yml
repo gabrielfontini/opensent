@@ -13,6 +13,11 @@ jobs:
           cmake -S tests -B build-native
           cmake --build build-native
           ./build-native/test_sent tests/data
+      - name: Decoder fuzzing (ASan + UBSan)
+        run: |
+          cmake -S tests -B build-fuzz -DSENT_FUZZ=ON
+          cmake --build build-fuzz
+          ./build-fuzz/fuzz_sent 20000000
       - name: Simulator
         run: cmake -S firmware/sim -B build-sim && cmake --build build-sim
       - uses: actions/setup-python@v5
