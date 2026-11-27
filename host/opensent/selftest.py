@@ -368,10 +368,11 @@ class SelfTest:
                             "run lengths %s, mean %.3f (expected %.3f)" % (dict(h), avg, per / 2))
             d.cmd("LA:TESTSIG 10000")  # slow enough for 1 MS/s (no aliasing)
             smp = la.capture(1_000_000, 2000, pre=1000, mask=0b11, value=0b01)
-            # PB1 toggles at half the PB0 rate, so (PB1, PB0) = (0, 1) first shows up
-            # right at the trigger point: the sample before it does not match
-            self._check("LA trigger position", (smp[1000] & 3) == 1 and (smp[999] & 3) != 1,
-                        "sample[1000]=%d, previous=%d" % (smp[1000] & 3, smp[999] & 3))
+            # level trigger: the first sample after the pre-trigger part that matches
+            # (PB1, PB0) = (0, 1) sits exactly at index `pre`; the pre-trigger part is real data
+            pre_vals = {s & 3 for s in smp[:1000]}
+            self._check("LA trigger position", (smp[1000] & 3) == 1 and len(pre_vals) >= 2,
+                        "sample[1000]=%d, pre-trigger values %s" % (smp[1000] & 3, sorted(pre_vals)))
             # SENT on PB10 (channel 10), decoded on the PC from the LA capture
             from . import codec
             d.cmd("LA:TESTSIG 0")

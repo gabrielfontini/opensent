@@ -93,7 +93,14 @@ uint32_t hw_millis(void)
 
 void hw_led(bool on)
 {
-    GPIOE->BSRR = on ? (1u << 3) : (1u << (3 + 16));
+    /* only touch the D3 bus (AHB4) when something changes: the logic
+     * analyzer's DMA reads GPIO on the same bus, and a write on every main
+     * loop pass delayed some of its samples */
+    static int8_t last = -1;
+    if (last != (int8_t)on) {
+        last = (int8_t)on;
+        GPIOE->BSRR = on ? (1u << 3) : (1u << (3 + 16));
+    }
 }
 
 const char *hw_board(void)
@@ -830,7 +837,11 @@ bool hw_watchdog_test(void)
 
 void hw_poll(void)
 {
-    IWDG1->KR = 0xAAAAu;
+    static uint32_t kicked;
+    if (s_ms - kicked >= 10u) { /* IWDG1 lives on the D3 bus as well: kick at 100 Hz */
+        kicked = s_ms;
+        IWDG1->KR = 0xAAAAu;
+    }
     if (s_boot_at && (int32_t)(s_ms - s_boot_at) >= 0) {
         s_boot_magic = BOOT_MAGIC;
         NVIC_SystemReset();
