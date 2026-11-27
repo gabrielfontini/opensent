@@ -301,6 +301,11 @@ function kv(s) { const o = {}; for (const t of s.split(/\s+/)) { const i = t.ind
 async function start(transport, label) {
   link = transport; transport.onLine = onLine; await transport.open();
   const idn = await query("*IDN?");
+  if (!idn.startsWith("OpenSENT")) {
+    setStatus("no answer: this is probably the logic-analyzer port");
+    alert("No reply to *IDN?. The board has two serial ports: pick the first one ('OpenSENT control'); the second is the logic analyzer for PulseView.");
+    link = null; return;
+  }
   setStatus(label + "  " + idn.split(",").slice(0, 2).join(" ") + " fw " + (idn.split(",")[3] || "?"));
   $("connect").disabled = true; $("demo").disabled = true;
   await query("RX" + chan + ":STATE ON"); rxOn = true; renderRxBtn();
