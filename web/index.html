@@ -1,0 +1,433 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenSENT console</title>
+<style>
+:root {
+  --bg: #f6f7f9; --panel: #ffffff; --ink: #1b1f24; --muted: #5d6673; --line: #dde1e6;
+  --accent: #0b6bcb; --accent-ink: #ffffff; --ok: #1a7f37; --bad: #c62828; --warn: #b26a00;
+  --fc1: #0b6bcb; --fc2: #c2410c; --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #0f1216; --panel: #171b21; --ink: #e6e9ee; --muted: #9aa4b1; --line: #2a3038;
+          --accent: #4ea1ff; --accent-ink: #0b0e12; --ok: #3fb950; --bad: #ff6b6b; --warn: #e3a008;
+          --fc1: #4ea1ff; --fc2: #ff8c42; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+header { display: flex; align-items: center; gap: 12px; padding: 10px 18px; border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top: 0; z-index: 2; }
+header h1 { font-size: 17px; margin: 0; letter-spacing: .2px; }
+header h1 span { color: var(--muted); font-weight: 400; }
+#status { color: var(--muted); font-family: var(--mono); font-size: 12px; margin-left: auto; }
+button { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 6px; padding: 5px 11px; cursor: pointer; }
+button:hover { border-color: var(--accent); }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+button.on { background: var(--ok); border-color: var(--ok); color: #fff; }
+button:disabled { opacity: .5; cursor: default; }
+main { display: grid; grid-template-columns: minmax(300px, 380px) 1fr; gap: 14px; padding: 14px 18px; max-width: 1500px; margin: 0 auto; }
+@media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+.col { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+section h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); margin: 0 0 10px; display: flex; align-items: center; gap: 8px; }
+section h2 .grow { flex: 1; }
+label { display: grid; grid-template-columns: 92px 1fr; align-items: center; gap: 8px; margin: 6px 0; color: var(--muted); }
+label > * { color: var(--ink); }
+input, select { font: inherit; background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; min-width: 0; }
+input[type=range] { padding: 0; accent-color: var(--accent); }
+.row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.row > input, .row > select { flex: 1; }
+.val { font-family: var(--mono); min-width: 44px; text-align: right; }
+.faults { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.tabs { display: flex; gap: 4px; }
+.tabs button { padding: 3px 10px; font-size: 12px; }
+.tabs button.sel { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; margin-bottom: 10px; }
+.kpi { border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px; }
+.kpi .k { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .4px; }
+.kpi .v { font-family: var(--mono); font-size: 19px; }
+.kpi .v.ok { color: var(--ok); } .kpi .v.bad { color: var(--bad); }
+canvas { width: 100%; display: block; }
+#chart { height: 260px; }
+#frame { height: 92px; }
+.legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); }
+.legend i { display: inline-block; width: 18px; height: 3px; vertical-align: middle; margin-right: 5px; border-radius: 2px; }
+table { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 12px; }
+td, th { text-align: left; padding: 3px 6px; border-bottom: 1px solid var(--line); }
+th { color: var(--muted); font-weight: 500; }
+#log { height: 150px; overflow: auto; font-family: var(--mono); font-size: 12px; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 6px; white-space: pre-wrap; }
+#log .tx { color: var(--accent); } #log .err { color: var(--bad); }
+.errs { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; font-family: var(--mono); font-size: 12px; }
+.errs div { border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; }
+.errs b { display: block; font-size: 15px; }
+.hint { color: var(--muted); font-size: 12px; }
+.banner { display: none; background: var(--warn); color: #111; padding: 6px 18px; font-size: 13px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>OpenSENT <span>SAE J2716 SENT console</span></h1>
+  <button id="connect" class="primary">Connect device</button>
+  <button id="demo">Demo (no hardware)</button>
+  <div id="status">disconnected</div>
+</header>
+<div class="banner" id="banner">Demo mode: a simulated instrument running in this page.</div>
+<main>
+  <div class="col">
+    <section>
+      <h2>Sensor emulator (TX)<span class="grow"></span><button id="txon">TX OFF</button></h2>
+      <label>Tick (us)<div class="row"><input id="tick" type="number" min="0.5" max="100" step="0.1" value="3"><select id="crc"><option>2010</option><option>LEGACY</option><option>STATUS</option></select></div></label>
+      <label>Format<div class="row"><select id="fmt"><option>12_12</option><option>12_12N</option><option>16_8</option><option>12</option><option>16</option></select><select id="nib"><option>6</option><option>3</option><option>4</option><option>5</option><option>7</option><option>8</option></select></div></label>
+      <label>Pause<select id="pause"><option value="OFF">none</option><option value="12">12 ticks</option><option value="56">56 ticks</option><option value="300">300 ticks</option><option value="CONST,282">constant frame 282</option></select></label>
+      <label>FC1<div class="row"><select id="w1"><option>CONST</option><option>SINE</option><option>TRI</option><option>RAMP</option><option>SQUARE</option><option>COUNT</option></select><input id="fc1" type="range" min="0" max="4095" value="2048"><span class="val" id="fc1v">2048</span></div></label>
+      <label>FC2<div class="row"><select id="w2"><option>CONST</option><option>SINE</option><option>TRI</option><option>RAMP</option><option>SQUARE</option><option>COUNT</option></select><input id="fc2" type="range" min="0" max="4095" value="2047"><span class="val" id="fc2v">2047</span></div></label>
+      <label>Period (s)<input id="period" type="number" min="0.05" step="0.05" value="2"></label>
+      <label>Serial<div class="row"><select id="slow"><option>OFF</option><option>SHORT</option><option>ENH12</option><option>ENH16</option></select><input id="slowmsgs" placeholder="id=value, ..." value="0x01=0, 0x23=786"></div></label>
+      <div class="row"><button id="apply" class="primary">Apply</button><span class="hint">Values apply at the next frame boundary.</span></div>
+    </section>
+    <section>
+      <h2>Fault injection</h2>
+      <div class="faults" id="faults"></div>
+      <p class="hint" id="faultinfo">Each click corrupts 10 frames (every 5th).</p>
+    </section>
+    <section>
+      <h2>SENT &rarr; analog bridge</h2>
+      <label>Source<div class="row"><select id="bch"><option value="0">RX0</option><option value="1">RX1</option><option value="2" selected>RX2</option></select><select id="bsig"><option>FC1</option><option>FC2</option></select></div></label>
+      <label>Input<div class="row"><input id="bin0" type="number" value="0"><input id="bin1" type="number" value="4095"></div></label>
+      <label>Volts<div class="row"><input id="bv0" type="number" step="0.05" value="0.5"><input id="bv1" type="number" step="0.05" value="3.0"></div></label>
+      <label>Fail-safe<div class="row"><input id="bfail" type="number" step="0.05" value="0.25" title="volts"><input id="bto" type="number" value="100" title="timeout ms"></div></label>
+      <div class="row"><button id="bon">Bridge OFF</button><span class="val" id="bout">-</span></div>
+    </section>
+  </div>
+  <div class="col">
+    <section>
+      <h2>Receiver<span class="grow"></span><div class="tabs" id="tabs"></div><button id="rxon">RX OFF</button><button id="rxclr">Clear</button></h2>
+      <div class="kpis">
+        <div class="kpi"><div class="k">Frames</div><div class="v" id="k-frames">-</div></div>
+        <div class="kpi"><div class="k">OK</div><div class="v ok" id="k-ok">-</div></div>
+        <div class="kpi"><div class="k">Errors</div><div class="v" id="k-err">-</div></div>
+        <div class="kpi"><div class="k">Tick</div><div class="v" id="k-tick">-</div></div>
+        <div class="kpi"><div class="k">Nibbles / CRC</div><div class="v" id="k-fmt">-</div></div>
+        <div class="kpi"><div class="k">Lock</div><div class="v" id="k-lock">-</div></div>
+      </div>
+      <div class="errs" id="errs"></div>
+    </section>
+    <section>
+      <h2>Live fast channels<span class="grow"></span><span class="legend"><span><i style="background:var(--fc1)"></i>FC1</span><span><i style="background:var(--fc2)"></i>FC2</span></span></h2>
+      <canvas id="chart"></canvas>
+    </section>
+    <section>
+      <h2>Last frame<span class="grow"></span><span class="val" id="lastinfo"></span></h2>
+      <canvas id="frame"></canvas>
+    </section>
+    <section>
+      <h2>Slow channel (serial messages)</h2>
+      <table><thead><tr><th>Format</th><th>ID</th><th>Value</th><th>Hex</th></tr></thead><tbody id="slowtab"><tr><td colspan="4" class="hint">none yet</td></tr></tbody></table>
+    </section>
+    <section>
+      <h2>Console</h2>
+      <div id="log"></div>
+      <div class="row" style="margin-top:6px"><input id="cmd" placeholder="e.g. RX0:STAT?  TX:FAULT CRC,5   HELP?" style="flex:1"><button id="send">Send</button></div>
+    </section>
+  </div>
+</main>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+
+/* ------------------------------------------------------------ SENT bits (demo) */
+const T4 = [0, 13, 7, 10, 14, 3, 9, 4, 1, 12, 6, 11, 15, 2, 8, 5];
+function crc2010(d) { let c = 5; for (const x of d) c = T4[c] ^ x; return T4[c]; }
+
+/* ------------------------------------------------------------ transports */
+class SerialTransport {
+  constructor(port) { this.port = port; this.onLine = null; }
+  async open() {
+    await this.port.open({ baudRate: 115200 });
+    try { await this.port.setSignals({ dataTerminalReady: true }); } catch (e) {}
+    this.writer = this.port.writable.getWriter();
+    this.enc = new TextEncoder();
+    this.reading = this.readLoop();
+  }
+  async readLoop() {
+    const dec = new TextDecoder(); let buf = "";
+    const reader = this.port.readable.getReader(); this.reader = reader;
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        let i;
+        while ((i = buf.indexOf("\n")) >= 0) { const l = buf.slice(0, i).trim(); buf = buf.slice(i + 1); if (l && this.onLine) this.onLine(l); }
+      }
+    } catch (e) { setStatus("read error: " + e.message); }
+  }
+  async write(line) { await this.writer.write(this.enc.encode(line + "\n")); }
+}
+
+/* A small simulated instrument so the console can be tried without hardware. */
+class DemoTransport {
+  constructor() {
+    this.onLine = null; this.t0 = performance.now(); this.tx = { on: false, tick: 3, fc: [{ k: "CONST", v: 2048, lo: 0, hi: 4095, p: 2 }, { k: "CONST", v: 2047, lo: 0, hi: 4095, p: 2 }], slow: "OFF", msgs: [], crc: "2010", fault: null };
+    this.rx = [0, 1, 2].map(() => ({ en: false, frames: 0, ok: 0, err: { crc: 0, nibble: 0, length: 0, short: 0, sync: 0 }, last: null }));
+    this.stream = 0; this.every = 1; this.cnt = 0; this.bridge = { en: false, ch: 2, sig: 1, in0: 0, in1: 4095, v0: 0.5, v1: 3, fail: 0.25, out: 0 };
+    this.timer = setInterval(() => this.step(), 20); this.lastStep = performance.now(); this.frac = 0;
+  }
+  async open() {}
+  emit(l) { setTimeout(() => this.onLine && this.onLine(l), 2); }
+  wave(w, t, n) {
+    const p = w.p > 0 ? (t / w.p) % 1 : 0, lo = w.lo, hi = w.hi;
+    switch (w.k) {
+      case "SINE": return Math.round(lo + (hi - lo) * (0.5 - 0.5 * Math.cos(2 * Math.PI * p)));
+      case "TRI": return Math.round(lo + (hi - lo) * (p < 0.5 ? 2 * p : 2 - 2 * p));
+      case "RAMP": return Math.round(lo + (hi - lo) * p);
+      case "SQUARE": return p < 0.5 ? lo : hi;
+      case "COUNT": return lo + (n % (hi - lo + 1));
+      default: return w.v;
+    }
+  }
+  step() {
+    const now = performance.now(), dt = (now - this.lastStep) / 1000; this.lastStep = now;
+    if (!this.tx.on) return;
+    const fps = 1e6 / (this.tx.tick * 200); this.frac += dt * fps;
+    let n = Math.floor(this.frac); this.frac -= n; n = Math.min(n, 400);
+    for (let i = 0; i < n; i++) {
+      const t = (now - this.t0) / 1000, k = this.tx.n = (this.tx.n || 0) + 1;
+      const a = this.wave(this.tx.fc[0], t, k) & 4095, b = this.wave(this.tx.fc[1], t, k) & 4095;
+      const d = [a >> 8, (a >> 4) & 15, a & 15, b & 15, (b >> 4) & 15, b >> 8];
+      let err = "OK";
+      if (this.tx.fault && this.tx.fault.left > 0 && k % 5 === 0) {
+        this.tx.fault.left--; err = { CRC: "CRC", NIBBLE: "NIBBLE", SHORT: "LENGTH", LONG: "LENGTH", SYNC: "SYNC" }[this.tx.fault.type] || "OK";
+      }
+      const status = 0, crc = crc2010(d), tick = this.tx.tick * 1000 * (1 + (Math.random() - 0.5) * 1e-4);
+      for (const ch of [0, 2]) {
+        const r = this.rx[ch]; if (!r.en) continue;
+        r.frames++; if (err === "OK") r.ok++; else r.err[err.toLowerCase()]++;
+        r.last = { err, status, data: d.map((x) => x.toString(16).toUpperCase()).join(""), crc, fc1: a, fc2: b, tick };
+        if (this.stream & (1 << ch)) {
+          if (err !== "OK" || ++this.cnt >= this.every) { this.cnt = 0; this.emit(`#F ${ch},${(t * 1e6).toFixed(1)},${err},${status},${r.last.data},${crc.toString(16).toUpperCase()},${a},${b},${tick.toFixed(1)},0,0`); }
+        }
+      }
+    }
+    const br = this.bridge;
+    if (br.en) {
+      const r = this.rx[br.ch];
+      if (r.en && r.last && this.tx.on) { const x = br.sig === 1 ? r.last.fc1 : r.last.fc2; const f = Math.min(1, Math.max(0, (x - br.in0) / (br.in1 - br.in0))); br.out = br.v0 + f * (br.v1 - br.v0); br.state = "OK"; }
+      else { br.out = br.fail; br.state = "FAIL"; }
+    }
+  }
+  async write(line) {
+    const out = [];
+    for (const raw of line.split(";")) {
+      const c = raw.trim(), sp = c.indexOf(" "), h = (sp < 0 ? c : c.slice(0, sp)).toUpperCase(), a = sp < 0 ? "" : c.slice(sp + 1).trim();
+      const m = h.match(/^RX(\d)?:(.*)$/), ch = m ? +(m[1] || 0) : 0;
+      let r = "OK";
+      if (h === "*IDN?") r = "OpenSENT,DEMO,000000000000,0.1.0";
+      else if (h === "*RST") { this.tx.on = false; this.rx.forEach((x) => (x.en = false)); }
+      else if (h === "HELP?") r = "demo: TX:*, RXn:*, STREAM, BRIDGEn:*";
+      else if (h === "PINS?") r = "TX=demo RX0=demo RX2=demo";
+      else if (h === "STREAM") { const [mm, ev] = a.split(","); this.stream = +mm || 0; this.every = +ev || 1; }
+      else if (h === "TX:STATE") this.tx.on = a.toUpperCase() === "ON";
+      else if (h === "TX:TICK") this.tx.tick = +a;
+      else if (h === "TX:CRC") this.tx.crc = a;
+      else if (h === "TX:FC1" || h === "TX:FC2") { const w = this.tx.fc[+h[5] - 1]; w.k = "CONST"; w.v = +a; }
+      else if (h === "TX:WAVE") { const p = a.split(","); const w = this.tx.fc[+p[0] - 1]; w.k = p[1].toUpperCase(); w.lo = +p[2]; w.hi = +p[3]; w.p = +p[4] || 1; if (w.k === "CONST") w.v = +p[2]; }
+      else if (h === "TX:FAULT") { const p = a.split(","); this.tx.fault = p[0].toUpperCase() === "OFF" ? null : { type: p[0].toUpperCase(), left: +(p[1] || 1) }; }
+      else if (h === "TX:INFO?") r = `state=${+this.tx.on} frames=${this.tx.n || 0}`;
+      else if (h === "TX:SLOW") this.tx.slow = a;
+      else if (h === "TX:SLOW:ADD") { const p = a.split(","); this.tx.msgs.push([+p[0], +p[1]]); }
+      else if (h === "TX:SLOW:CLR") this.tx.msgs = [];
+      else if (h.startsWith("TX:")) r = "OK";
+      else if (m && m[2] === "STATE") { this.rx[ch].en = a.toUpperCase() === "ON"; }
+      else if (m && m[2] === "CLR") { Object.assign(this.rx[ch], { frames: 0, ok: 0, err: { crc: 0, nibble: 0, length: 0, short: 0, sync: 0 } }); }
+      else if (m && m[2] === "STAT?") { const x = this.rx[ch]; r = `en=${+x.en} lock=${+(x.en && this.tx.on)} frames=${x.frames} ok=${x.ok} crc=${x.err.crc} nibble=${x.err.nibble} length=${x.err.length} short=${x.err.short} sync=${x.err.sync} pauses=0 cal=0 margin=0 glitches=0 resyncs=0 pulses=${x.frames * 9} overruns=0 n=6 crc_mode=${this.tx.crc} tick_ns=${x.last ? x.last.tick.toFixed(1) : 0} slow_ok=0 slow_err=0`; }
+      else if (m && m[2] === "SLOW?") r = this.rx[ch].en && this.tx.on && this.tx.slow !== "OFF" && this.tx.msgs.length ? this.tx.msgs.map(([i, v]) => `${this.tx.slow}:${i}=${v}`).join(",") : "NONE";
+      else if (m && m[2] === "LAST?") { const l = this.rx[ch].last; r = l ? `ch=${ch} err=${l.err} status=${l.status} data=${l.data} crc=${l.crc.toString(16).toUpperCase()} fc1=${l.fc1} fc2=${l.fc2} tick_ns=${l.tick.toFixed(1)} pause=0 flags=0` : "NONE"; }
+      else if (m) r = "OK";
+      else if (/^BRIDGE1:MAP$/.test(h)) { const p = a.split(","); Object.assign(this.bridge, { ch: +p[0].replace(/\D/g, ""), sig: p[1].toUpperCase() === "FC2" ? 2 : 1, in0: +p[2], in1: +p[3], v0: +p[4], v1: +p[5] }); }
+      else if (/^BRIDGE1:FAIL$/.test(h)) { const p = a.split(","); this.bridge.fail = +p[0]; }
+      else if (/^BRIDGE1:STATE$/.test(h)) { this.bridge.en = a.toUpperCase() === "ON"; if (!this.bridge.en) this.bridge.out = 0; }
+      else if (/^BRIDGE1:OUT\?$/.test(h)) r = `${this.bridge.out.toFixed(4)},${this.bridge.en ? this.bridge.state || "FAIL" : "OFF"},${this.bridge.out.toFixed(4)}`;
+      else r = 'ERR -113,"Undefined header"';
+      out.push(r);
+      if (r.startsWith("ERR")) break;
+    }
+    this.emit(out.join(";"));
+  }
+}
+
+/* ------------------------------------------------------------ link */
+let link = null, pending = [], busy = Promise.resolve();
+function setStatus(s) { $("status").textContent = s; }
+function log(s, cls) { const el = $("log"), d = document.createElement("div"); if (cls) d.className = cls; d.textContent = s; el.appendChild(d); while (el.childNodes.length > 300) el.removeChild(el.firstChild); el.scrollTop = el.scrollHeight; }
+function onLine(l) {
+  if (l.startsWith("#F ")) return onFrame(l);
+  if (l.startsWith("#")) return;
+  const p = pending.shift(); if (p) p(l);
+}
+function query(cmd, quiet) {
+  const job = busy.then(() => new Promise((resolve) => {
+    if (!link) return resolve("ERR not connected");
+    let done = false;
+    const t = setTimeout(() => { if (!done) { done = true; pending.shift(); resolve("ERR timeout"); } }, 2000);
+    pending.push((r) => { if (!done) { done = true; clearTimeout(t); resolve(r); } });
+    if (!quiet) log("> " + cmd, "tx");
+    link.write(cmd);
+  })).then((r) => { if (!quiet || r.startsWith("ERR")) log(r, r.startsWith("ERR") ? "err" : ""); return r; });
+  busy = job.catch(() => {});
+  return job;
+}
+function kv(s) { const o = {}; for (const t of s.split(/\s+/)) { const i = t.indexOf("="); if (i > 0) o[t.slice(0, i)] = t.slice(i + 1); } return o; }
+
+async function start(transport, label) {
+  link = transport; transport.onLine = onLine; await transport.open();
+  const idn = await query("*IDN?");
+  setStatus(label + "  " + idn.split(",").slice(0, 2).join(" ") + " fw " + (idn.split(",")[3] || "?"));
+  $("connect").disabled = true; $("demo").disabled = true;
+  await query("RX" + chan + ":STATE ON"); rxOn = true; renderRxBtn();
+  await setStream();
+  setInterval(poll, 500);
+}
+$("connect").onclick = async () => {
+  if (!("serial" in navigator)) { alert("Web Serial is not available: use Chrome or Edge (desktop), or try the demo."); return; }
+  try {
+    const port = await navigator.serial.requestPort({ filters: [{ usbVendorId: 0x0483, usbProductId: 0x5740 }] });
+    await start(new SerialTransport(port), "USB");
+  } catch (e) { setStatus("not connected: " + e.message); }
+};
+$("demo").onclick = async () => { $("banner").style.display = "block"; await start(new DemoTransport(), "DEMO"); await query("TX:WAVE 1,SINE,200,3900,2"); $("w1").value = "SINE"; await query("TX:WAVE 2,TRI,500,3500,3"); $("w2").value = "TRI"; await query("TX:STATE ON"); txOn = true; renderTxBtn(); };
+
+/* ------------------------------------------------------------ TX panel */
+let txOn = false;
+function renderTxBtn() { $("txon").textContent = txOn ? "TX ON" : "TX OFF"; $("txon").className = txOn ? "on" : ""; }
+$("txon").onclick = async () => { txOn = !txOn; await query("TX:STATE " + (txOn ? "ON" : "OFF")); renderTxBtn(); setStream(); };
+for (const i of [1, 2]) {
+  $("fc" + i).oninput = () => { $("fc" + i + "v").textContent = $("fc" + i).value; if ($("w" + i).value === "CONST") query(`TX:FC${i} ${$("fc" + i).value}`, true); };
+}
+$("apply").onclick = async () => {
+  const cmds = [`TX:TICK ${$("tick").value}`, `TX:CRC ${$("crc").value}`, `TX:FMT ${$("fmt").value}`, `TX:NIB ${$("nib").value}`, `TX:PAUSE ${$("pause").value}`];
+  for (const i of [1, 2]) {
+    const w = $("w" + i).value, v = $("fc" + i).value;
+    cmds.push(w === "CONST" ? `TX:FC${i} ${v}` : `TX:WAVE ${i},${w},${w === "COUNT" ? 0 : Math.min(200, v)},${w === "COUNT" ? 4095 : Math.max(v, 3900)},${$("period").value}`);
+  }
+  cmds.push(`TX:SLOW ${$("slow").value}`, "TX:SLOW:CLR");
+  for (const m of $("slowmsgs").value.split(",")) { const [i, v] = m.split("=").map((s) => s && s.trim()); if (i && v) cmds.push(`TX:SLOW:ADD ${parseInt(i)},${parseInt(v)}`); }
+  for (const c of cmds) { const r = await query(c); if (r.startsWith("ERR")) break; }
+  setStream();
+};
+for (const f of ["CRC", "SYNC", "NIBBLE", "SHORT", "LONG", "CAL", "SCRC", "OFF"]) {
+  const b = document.createElement("button"); b.textContent = f;
+  b.title = { CRC: "wrong CRC nibble", SYNC: "40-tick sync", NIBBLE: "nibble out of range", SHORT: "one nibble missing", LONG: "one extra nibble", CAL: "frame 3 % slower (calibration drift)", SCRC: "corrupt next serial message CRC", OFF: "stop" }[f];
+  b.onclick = () => query(f === "OFF" ? "TX:FAULT OFF" : `TX:FAULT ${f},10,5`);
+  $("faults").appendChild(b);
+}
+
+/* ------------------------------------------------------------ RX panel */
+let chan = 2, rxOn = false;
+const tabs = $("tabs");
+for (const c of [0, 1, 2]) {
+  const b = document.createElement("button"); b.textContent = c === 2 ? "RX2 (TX pin)" : "RX" + c; b.dataset.ch = c;
+  b.onclick = async () => { chan = c; renderTabs(); series.length = 0; const s = kv(await query(`RX${c}:STAT?`, true)); rxOn = s.en === "1"; renderRxBtn(); setStream(); };
+  tabs.appendChild(b);
+}
+function renderTabs() { for (const b of tabs.children) b.className = +b.dataset.ch === chan ? "sel" : ""; }
+renderTabs();
+function renderRxBtn() { $("rxon").textContent = rxOn ? "RX ON" : "RX OFF"; $("rxon").className = rxOn ? "on" : ""; }
+$("rxon").onclick = async () => { rxOn = !rxOn; await query(`RX${chan}:STATE ${rxOn ? "ON" : "OFF"}`); renderRxBtn(); };
+$("rxclr").onclick = () => { query(`RX${chan}:CLR`); series.length = 0; };
+
+async function setStream() {
+  if (!link) return;
+  const tick = parseFloat($("tick").value) || 3, fps = 1e6 / (tick * 200), every = Math.max(1, Math.round(fps / 120));
+  await query(`STREAM ${1 << chan},${every}`, true);
+}
+
+const series = []; const MAXPTS = 900;
+let lastFrame = null;
+function onFrame(l) {
+  const p = l.slice(3).split(",");
+  if (+p[0] !== chan) return;
+  const f = { t: +p[1], err: p[2], status: parseInt(p[3], 16), data: p[4], crc: parseInt(p[5], 16), fc1: +p[6], fc2: +p[7], tick: +p[8], flags: +p[9], pause: +p[10] };
+  if (f.err === "OK") { series.push([f.t, f.fc1, f.fc2]); if (series.length > MAXPTS) series.splice(0, series.length - MAXPTS); }
+  lastFrame = f;
+}
+
+async function poll() {
+  if (!link) return;
+  const s = kv(await query(`RX${chan}:STAT?`, true));
+  if (!s.frames) return;
+  const errs = ["crc", "nibble", "length", "short", "sync"].reduce((a, k) => a + (+s[k] || 0), 0);
+  $("k-frames").textContent = s.frames; $("k-ok").textContent = s.ok;
+  $("k-err").textContent = errs; $("k-err").className = "v " + (errs ? "bad" : "");
+  $("k-tick").textContent = s.tick_ns > 0 ? (+s.tick_ns / 1000).toFixed(3) + " us" : "-";
+  $("k-fmt").textContent = `${s.n} / ${s.crc_mode}`;
+  $("k-lock").textContent = s.lock === "1" ? "locked" : "hunting"; $("k-lock").className = "v " + (s.lock === "1" ? "ok" : "bad");
+  $("errs").innerHTML = ["crc", "nibble", "length", "sync", "cal", "pauses"].map((k) => `<div>${k}<b>${s[k] ?? "-"}</b></div>`).join("");
+  const slow = await query(`RX${chan}:SLOW?`, true);
+  $("slowtab").innerHTML = slow === "NONE" || slow.startsWith("ERR") ? '<tr><td colspan="4" class="hint">none yet</td></tr>' :
+    slow.split(",").map((it) => { const [fmt, rest] = it.split(":"); const [id, v] = rest.split("="); return `<tr><td>${fmt}</td><td>0x${(+id).toString(16).toUpperCase().padStart(2, "0")}</td><td>${v}</td><td>0x${(+v).toString(16).toUpperCase()}</td></tr>`; }).join("");
+  if (bridgeOn) { const o = (await query("BRIDGE1:OUT?", true)).split(","); $("bout").textContent = `${(+o[0]).toFixed(3)} V ${o[1]}` + (o[2] >= 0 ? `  (meas ${(+o[2]).toFixed(3)} V)` : ""); }
+}
+
+/* ------------------------------------------------------------ bridge */
+let bridgeOn = false;
+$("bon").onclick = async () => {
+  bridgeOn = !bridgeOn;
+  if (bridgeOn) {
+    await query(`RX${$("bch").value}:STATE ON`);
+    await query(`BRIDGE1:MAP RX${$("bch").value},${$("bsig").value},${$("bin0").value},${$("bin1").value},${$("bv0").value},${$("bv1").value}`);
+    await query(`BRIDGE1:FAIL ${$("bfail").value},${$("bto").value}`);
+  }
+  await query("BRIDGE1:STATE " + (bridgeOn ? "ON" : "OFF"));
+  $("bon").textContent = bridgeOn ? "Bridge ON" : "Bridge OFF"; $("bon").className = bridgeOn ? "on" : "";
+};
+
+/* ------------------------------------------------------------ console */
+$("send").onclick = () => { const c = $("cmd").value.trim(); if (c) query(c); };
+$("cmd").onkeydown = (e) => { if (e.key === "Enter") $("send").click(); };
+
+/* ------------------------------------------------------------ drawing */
+function css(v) { return getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
+function fit(cv) { const r = cv.getBoundingClientRect(), d = devicePixelRatio || 1; if (cv.width !== Math.round(r.width * d)) { cv.width = Math.round(r.width * d); cv.height = Math.round(r.height * d); } const g = cv.getContext("2d"); g.setTransform(d, 0, 0, d, 0, 0); return [g, r.width, r.height]; }
+function drawChart() {
+  const [g, w, h] = fit($("chart")); g.clearRect(0, 0, w, h);
+  const L = 44, R = 8, T = 8, B = 22, pw = w - L - R, ph = h - T - B;
+  g.strokeStyle = css("--line"); g.fillStyle = css("--muted"); g.font = "11px " + css("--mono"); g.lineWidth = 1;
+  for (const v of [0, 1024, 2048, 3072, 4095]) { const y = T + ph - (v / 4095) * ph; g.beginPath(); g.moveTo(L, y); g.lineTo(L + pw, y); g.stroke(); g.fillText(String(v), 4, y + 4); }
+  if (series.length > 1) {
+    const t0 = series[0][0], t1 = series[series.length - 1][0], span = Math.max(1, t1 - t0);
+    g.fillText(`${(span / 1e6).toFixed(2)} s`, L + pw - 50, h - 6);
+    for (const [k, col] of [[1, "--fc1"], [2, "--fc2"]]) {
+      g.strokeStyle = css(col); g.lineWidth = 2; g.beginPath();
+      series.forEach((p, i) => { const x = L + ((p[0] - t0) / span) * pw, y = T + ph - (p[k] / 4095) * ph; i ? g.lineTo(x, y) : g.moveTo(x, y); });
+      g.stroke();
+    }
+  } else { g.fillText("waiting for frames ...", L + 10, T + 20); }
+}
+function drawFrame() {
+  const [g, w, h] = fit($("frame")); g.clearRect(0, 0, w, h);
+  const f = lastFrame; if (!f) return;
+  const nib = [f.status, ...f.data.split("").map((x) => parseInt(x, 16)), f.crc];
+  const pulses = [56, ...nib.map((v) => 12 + v)]; if (f.pause) pulses.push(f.pause);
+  const total = pulses.reduce((a, b) => a + b, 0), sx = (w - 10) / total, hi = 18, lo = 58;
+  let x = 5; g.lineWidth = 2; g.strokeStyle = css("--ink"); g.beginPath(); g.moveTo(x, hi);
+  pulses.forEach((p) => { g.lineTo(x, lo); g.lineTo(x + 5 * sx, lo); g.lineTo(x + 5 * sx, hi); x += p * sx; g.lineTo(x, hi); });
+  g.stroke();
+  x = 5; g.font = "11px " + css("--mono"); g.textAlign = "center";
+  const names = ["SYNC", "S", ...f.data.split("").map((_, i) => "D" + (i + 1)), "CRC", "PAUSE"];
+  pulses.forEach((p, i) => {
+    g.fillStyle = i === 0 ? css("--muted") : (i === pulses.length - 1 - (f.pause ? 1 : 0) ? (f.err === "OK" ? css("--ok") : css("--bad")) : css("--ink"));
+    const cx = x + (p * sx) / 2;
+    g.fillText(names[i], cx, 80);
+    if (i > 0 && i <= nib.length) g.fillText(nib[i - 1].toString(16).toUpperCase(), cx, 12);
+    x += p * sx;
+  });
+  g.textAlign = "start";
+  $("lastinfo").textContent = `${f.err}  FC1 ${f.fc1}  FC2 ${f.fc2}  tick ${(f.tick / 1000).toFixed(3)} us`;
+}
+(function loop() { drawChart(); drawFrame(); requestAnimationFrame(loop); })();
+if (/[?&]demo\b/.test(location.search)) $("demo").click();
+</script>
+</body>
+</html>
