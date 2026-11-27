@@ -192,13 +192,19 @@ static sent_err_t decode_raw(const sent_rx_t *rx, const uint32_t *p, unsigned cn
 
     if (err == SENT_OK) {
         err = decode_nibbles(rx, p, body, f);
-        /* learning with a nibble-sized pause: the CRC tells which reading is right */
-        if (!n_cfg && !pause && !rx->cfg.no_pause && err != SENT_OK && cnt >= 4u) {
+        /* learning with a nibble-sized last pulse: it is either the CRC or a
+         * short pause. Try both readings; when both pass the CRC (1 in 16,
+         * and it sticks with a constant signal) prefer the J2716 typical
+         * 6 data nibbles, then the reading with the pause. */
+        if (!n_cfg && !pause && !rx->cfg.no_pause && cnt >= 4u) {
             sent_frame_t alt = *f;
             if (decode_nibbles(rx, p, cnt - 1u, &alt) == SENT_OK) {
-                *f    = alt;
-                pause = true;
-                err   = SENT_OK;
+                int da = (int)f->n - 6, db = (int)alt.n - 6;
+                if (err != SENT_OK || (db < 0 ? -db : db) <= (da < 0 ? -da : da)) {
+                    *f    = alt;
+                    pause = true;
+                    err   = SENT_OK;
+                }
             }
         }
     }
@@ -308,6 +314,9 @@ static bool feed_one(sent_rx_t *rx, uint32_t clocks, sent_frame_t *out)
     if (rx->nseg == 0 && r > NIBBLE_MAX_TICK) {
         /* a status nibble is never this long: the pulse that opened the
          * segment was a pause (e.g. constant frame length), this is the sync */
+        if (rx->locked) {
+            rx->st.pauses++;
+        }
         if (sync_in_range(rx, clocks) || sync_like) {
             open_segment(rx, clocks);
         } else {
