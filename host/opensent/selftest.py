@@ -206,12 +206,34 @@ class SelfTest:
         for ch, d in zip(self.chans, self._window(0.3)):
             self._check("RX%d rejects tick outside +/-25 %%" % ch, d["ok"] == 0, "ok=%d frames=%d" % (d["ok"], d["frames"]))
 
+    def test_bridge(self) -> None:
+        """SENT -> analog bridge: decoded FC1 drives DAC1, read back on chip."""
+        self._setup("TX:FC1 0")
+        self.dev.cmd("BRIDGE1:MAP RX2,FC1,0,4095,0.5,3.0")
+        self.dev.cmd("BRIDGE1:FAIL 0.25,100")
+        self.dev.cmd("BRIDGE1:STATE ON")
+        for val in (0, 1024, 2048, 3071, 4095):
+            self.dev.cmd("TX:FC1 %d" % val)
+            time.sleep(0.1)
+            cmd_v, state, meas = self.dev.query("BRIDGE1:OUT?").split(",")
+            want = 0.5 + 2.5 * val / 4095.0
+            m = float(meas)
+            ok = state == "OK" and abs(float(cmd_v) - want) < 0.002 and (m < 0 or abs(m - want) < 0.02)
+            self._check("bridge FC1=%d -> %.3f V" % (val, want), ok,
+                        "commanded=%s measured=%s state=%s" % (cmd_v, meas, state))
+        self.dev.cmd("TX:STATE OFF")  # sensor lost -> fail-safe level after the timeout
+        time.sleep(0.3)
+        cmd_v, state, meas = self.dev.query("BRIDGE1:OUT?").split(",")
+        m = float(meas)
+        self._check("bridge fail-safe on sensor loss", state == "FAIL" and abs(float(cmd_v) - 0.25) < 0.002
+                    and (m < 0 or abs(m - 0.25) < 0.02), "commanded=%s measured=%s state=%s" % (cmd_v, meas, state))
+
     def run(self) -> Report:
         idn = self.dev.idn()
         self.log("OpenSENT self test on %s (%s), channels %s" % (self.dev.port, idn.split(",")[1],
                                                                 ",".join("RX%d" % c for c in self.chans)))
         for t in (self.test_counter, self.test_ticks, self.test_clock_error, self.test_crc_modes,
-                  self.test_formats, self.test_pauses, self.test_slow, self.test_faults, self.test_rx_tick_config):
+                  self.test_formats, self.test_pauses, self.test_slow, self.test_faults, self.test_rx_tick_config, self.test_bridge):
             self.log("%s: %s" % (t.__name__[5:], (t.__doc__ or "").strip().splitlines()[0] if t.__doc__ else ""))
             t()
         self.dev.reset()

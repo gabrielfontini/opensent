@@ -41,6 +41,7 @@ unsigned hw_rx_read(unsigned ch, uint32_t *ts, unsigned max, uint32_t *overruns)
 /* analog outputs (bridge) */
 float hw_dac_max(void);
 void  hw_dac(unsigned ch, float volts);
+float hw_dac_meas(unsigned ch); /* measured output (V), < 0 if unsupported */
 
 void hw_bootloader(void);
 

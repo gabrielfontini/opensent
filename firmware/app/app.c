@@ -834,7 +834,9 @@ static err_t cmd_bridge(cmd_t *c, const char *sub)
         return E_OK;
     }
     if (ieq(sub, "OUT") && c->query) {
-        outf("%.4f,%s", (double)b->out, b->failed ? "FAIL" : "OK");
+        /* commanded volts, state, measured volts (on-chip read-back) */
+        outf("%.4f,%s,%.4f", (double)b->out, !b->en ? "OFF" : (b->failed ? "FAIL" : "OK"),
+             (double)hw_dac_meas(n - 1));
         return E_OK;
     }
     return E_UNDEF;
@@ -887,7 +889,7 @@ static err_t execute(char *s)
              "TX:WAVE[?],TX:RAW[?],TX:PAUSE[?],TX:SLOW[?],TX:SLOW:ADD,TX:SLOW:CLR,TX:FAULT[?],TX:DRIVE[?],TX:INFO?,"
              "RXn:STATE[?],RXn:POL[?],RXn:TICK[?],RXn:NIB[?],RXn:CRC[?],RXn:FMT[?],RXn:PAUSE[?],RXn:CLR,"
              "RXn:LAST?,RXn:VAL?,RXn:STAT?,RXn:SLOW?,RXn:RAW?,"
-             "BRIDGEn:STATE[?],BRIDGEn:MAP[?],BRIDGEn:FAIL[?],BRIDGEn:OUT?,DACn");
+             "BRIDGEn:STATE[?],BRIDGEn:MAP[?],BRIDGEn:FAIL[?],BRIDGEn:OUT?,DACn[?],DACn:MEAS?");
         return E_OK;
     }
     if (ieq(c.hdr, "PINS") && c.query) {
@@ -944,6 +946,11 @@ static err_t execute(char *s)
             outf("OK");
         }
         return e;
+    }
+    if ((sub = node(&c, "DAC")) != NULL && ieq(sub, "MEAS") && c.query && c.idx >= 1 &&
+        c.idx <= (int)HW_DAC_CHANNELS) {
+        outf("%.4f", (double)hw_dac_meas((unsigned)c.idx - 1));
+        return E_OK;
     }
     if ((sub = node(&c, "DAC")) != NULL && *sub == '\0' && c.idx >= 1 && c.idx <= (int)HW_DAC_CHANNELS) {
         double v;

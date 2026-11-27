@@ -125,6 +125,60 @@ void hw_dac(unsigned ch, float volts)
     }
 }
 
+/* DAC read-back: DAC1 OUT1/OUT2 are internally connected to ADC2 inputs
+ * 16/17. DAC and ADC share VREF+, so the read-back is ratiometric: it
+ * verifies the bridge mapping independently of the exact VREF+ value. */
+static bool s_adc_ok;
+
+static void delay_us(uint32_t us)
+{
+    uint32_t n = us * (SystemCoreClock / 4000000u);
+    while (n--) {
+        __NOP();
+    }
+}
+
+static void adc_init(void)
+{
+    RCC->D3CCIPR = (RCC->D3CCIPR & ~RCC_D3CCIPR_ADCSEL) | (2u << RCC_D3CCIPR_ADCSEL_Pos); /* per_ck = HSI 64 MHz */
+    RCC->AHB1ENR |= RCC_AHB1ENR_ADC12EN;
+    (void)RCC->AHB1ENR;
+    ADC12_COMMON->CCR = (2u << ADC_CCR_PRESC_Pos); /* async clock / 4 = 16 MHz */
+    ADC2->CR = 0;                                   /* leave deep power down */
+    ADC2->CR = ADC_CR_ADVREGEN | (2u << ADC_CR_BOOST_Pos);
+    delay_us(50);
+    ADC2->CR |= ADC_CR_ADCALLIN;
+    ADC2->CR |= ADC_CR_ADCAL;
+    for (uint32_t i = 0; (ADC2->CR & ADC_CR_ADCAL) && i < 10000000u; i++) {
+    }
+    ADC2->ISR = ADC_ISR_ADRDY;
+    ADC2->CR |= ADC_CR_ADEN;
+    for (uint32_t i = 0; !(ADC2->ISR & ADC_ISR_ADRDY) && i < 10000000u; i++) {
+    }
+    s_adc_ok = (ADC2->ISR & ADC_ISR_ADRDY) != 0;
+    ADC2->CFGR = ADC_CFGR_OVRMOD; /* 16 bit, single, software trigger */
+    ADC2->PCSEL = (1u << 16) | (1u << 17);
+    ADC2->SMPR2 = (7u << ADC_SMPR2_SMP16_Pos) | (7u << (ADC_SMPR2_SMP16_Pos + 3)); /* 810.5 cycles */
+}
+
+float hw_dac_meas(unsigned ch)
+{
+    if (!s_adc_ok || ch > 1) {
+        return -1.0f;
+    }
+    uint32_t acc = 0;
+    const unsigned n = 16;
+    ADC2->SQR1 = ((16u + ch) << ADC_SQR1_SQ1_Pos); /* L = 0: one conversion */
+    for (unsigned i = 0; i < n; i++) {
+        ADC2->ISR = ADC_ISR_EOC;
+        ADC2->CR |= ADC_CR_ADSTART;
+        for (uint32_t k = 0; !(ADC2->ISR & ADC_ISR_EOC) && k < 1000000u; k++) {
+        }
+        acc += ADC2->DR;
+    }
+    return (float)acc / (float)n / 65535.0f * 3.3f;
+}
+
 /* ------------------------------------------------------------ console */
 
 void hw_write(const char *s, unsigned n)
@@ -464,10 +518,11 @@ void hw_init(void)
     /* DAC1 OUT1/OUT2 on PA4/PA5, buffered */
     gpio_mode(GPIOA, 4, 3, 0);
     gpio_mode(GPIOA, 5, 3, 0);
-    DAC1->MCR = 0;
+    DAC1->MCR = (1u << DAC_MCR_MODE1_Pos) | (1u << DAC_MCR_MODE2_Pos); /* pin + on-chip, buffered */
     DAC1->DHR12R1 = 0;
     DAC1->DHR12R2 = 0;
     DAC1->CR = DAC_CR_EN1 | DAC_CR_EN2;
+    adc_init();
 
     NVIC_SetPriority(EXTI15_10_IRQn, 0);
     NVIC_SetPriority(DMA1_Stream0_IRQn, 1);
