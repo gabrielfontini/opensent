@@ -34,6 +34,21 @@ def find_ports() -> List[str]:
     return _ports(False)
 
 
+def la_port_for(control_port: str) -> Optional[str]:
+    """The logic-analyzer port of the same board as `control_port`."""
+    ctl = None
+    for p in serial.tools.list_ports.comports():
+        if p.device == control_port:
+            ctl = p
+    if ctl is None or not ctl.location:
+        return None
+    base = ctl.location.rsplit(".", 1)[0]
+    for p in serial.tools.list_ports.comports():
+        if p.location and p.location.rsplit(".", 1)[0] == base and "logic" in (p.interface or "").lower():
+            return p.device
+    return None
+
+
 def find_la_ports() -> List[str]:
     """SUMP / OLS logic-analyzer ports (second CDC interface), for sigrok's ols driver."""
     return _ports(True)

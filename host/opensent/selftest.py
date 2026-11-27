@@ -344,16 +344,16 @@ class SelfTest:
         """16-channel SUMP/OLS logic analyzer on the second USB port (sigrok/PulseView)."""
         from collections import Counter
 
-        from .device import find_la_ports
+        from .device import la_port_for
         from .sump import Sump, runs
-        ports = find_la_ports()
-        if not ports:
+        port = la_port_for(self.dev.port)
+        if not port or self.dev.query("LA:INFO?") == "none":
             return  # simulator / single-port firmware
         d = self.dev
         d.reset()
         d.cmd("LA:PORT B")
         d.cmd("LA:TESTSIG 1000000")  # 1 MHz on PB0, 500 kHz on PB1
-        la = Sump(ports[0])
+        la = Sump(port)
         try:
             meta = la.metadata()
             self._check("LA identifies (SUMP ID + metadata)", la.ident() == b"1ALS" and meta.get("probes") == 16,
@@ -366,6 +366,7 @@ class SelfTest:
                 ok = len(smp) == 60000 and abs(avg - per / 2) < 0.02 and max(h) - min(h) <= 1
                 self._check("LA %.1f MS/s timing (1 MHz test signal)" % (rate / 1e6), ok,
                             "run lengths %s, mean %.3f (expected %.3f)" % (dict(h), avg, per / 2))
+            d.cmd("LA:TESTSIG 10000")  # slow enough for 1 MS/s (no aliasing)
             smp = la.capture(1_000_000, 2000, pre=1000, mask=0b11, value=0b01)
             # PB1 toggles at half the PB0 rate, so (PB1, PB0) = (0, 1) first shows up
             # right at the trigger point: the sample before it does not match
