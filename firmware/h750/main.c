@@ -9,12 +9,22 @@
 #include "app.h"
 #include "clock.h"
 #include "hw.h"
+#include "la.h"
 
 void hw_early(void);
 void hw_poll(void);
 
 static char s_line[256];
 static unsigned s_len;
+
+static void la_console(void)
+{
+    while (tud_cdc_n_available(1)) {
+        uint8_t b[64];
+        uint32_t n = tud_cdc_n_read(1, b, sizeof b);
+        la_rx(b, n);
+    }
+}
 
 static void console_poll(void)
 {
@@ -45,10 +55,13 @@ int main(void)
     hw_init();
     tusb_init();
     NVIC_SetPriority(OTG_FS_IRQn, 3);
+    la_init();
     app_init();
     for (;;) {
         tud_task();
         console_poll();
+        la_console();
+        la_poll();
         app_task();
         hw_poll();
     }

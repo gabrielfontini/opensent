@@ -340,12 +340,60 @@ class SelfTest:
         d.cmd("CFG:CLR")
         d.cmd("CFG:SAVE")
 
+    def test_logic_analyzer(self) -> None:
+        """16-channel SUMP/OLS logic analyzer on the second USB port (sigrok/PulseView)."""
+        from collections import Counter
+
+        from .device import find_la_ports
+        from .sump import Sump, runs
+        ports = find_la_ports()
+        if not ports:
+            return  # simulator / single-port firmware
+        d = self.dev
+        d.reset()
+        d.cmd("LA:PORT B")
+        d.cmd("LA:TESTSIG 1000000")  # 1 MHz on PB0, 500 kHz on PB1
+        la = Sump(ports[0])
+        try:
+            meta = la.metadata()
+            self._check("LA identifies (SUMP ID + metadata)", la.ident() == b"1ALS" and meta.get("probes") == 16,
+                        "%s" % meta)
+            for rate, per in ((10_000_000, 10), (33_333_333, 100 / 3)):
+                smp = la.capture(rate, 60000)
+                ch0 = [s & 1 for s in smp]
+                h = Counter(runs(ch0))
+                avg = sum(k * v for k, v in h.items()) / max(1, sum(h.values()))
+                ok = len(smp) == 60000 and abs(avg - per / 2) < 0.02 and max(h) - min(h) <= 1
+                self._check("LA %.1f MS/s timing (1 MHz test signal)" % (rate / 1e6), ok,
+                            "run lengths %s, mean %.3f (expected %.3f)" % (dict(h), avg, per / 2))
+            smp = la.capture(1_000_000, 2000, pre=1000, mask=0b11, value=0b01)
+            # PB1 toggles at half the PB0 rate, so (PB1, PB0) = (0, 1) first shows up
+            # right at the trigger point: the sample before it does not match
+            self._check("LA trigger position", (smp[1000] & 3) == 1 and (smp[999] & 3) != 1,
+                        "sample[1000]=%d, previous=%d" % (smp[1000] & 3, smp[999] & 3))
+            # SENT on PB10 (channel 10), decoded on the PC from the LA capture
+            from . import codec
+            d.cmd("LA:TESTSIG 0")
+            d.cmd("TX:WAVE 1,COUNT,0,4095")
+            d.cmd("TX:STATE ON")
+            time.sleep(0.05)
+            smp = la.capture(10_000_000, 100000)
+            ch10 = [(s >> 10) & 1 for s in smp]
+            fall = [i / 10e6 for i in range(1, len(ch10)) if ch10[i - 1] == 1 and ch10[i] == 0]
+            fr = [f for f in codec.Decoder(clk_hz=1.0, nibbles=6).decode_edges(fall) if f.ok]
+            gaps = sum(1 for a, b in zip(fr, fr[1:]) if (a.fc1 + 1) % 4096 != b.fc1)
+            self._check("LA capture of the SENT pin decodes", len(fr) >= 14 and gaps == 0,
+                        "frames=%d gaps=%d" % (len(fr), gaps))
+        finally:
+            la.close()
+            d.cmd("LA:TESTSIG 0")
+
     def run(self) -> Report:
         idn = self.dev.idn()
         self.log("OpenSENT self test on %s (%s), channels %s" % (self.dev.port, idn.split(",")[1],
                                                                 ",".join("RX%d" % c for c in self.chans)))
         for t in (self.test_counter, self.test_ticks, self.test_clock_error, self.test_crc_modes,
-                  self.test_formats, self.test_pauses, self.test_slow, self.test_faults, self.test_rx_tick_config, self.test_bridge, self.test_capture, self.test_pulltest, self.test_can, self.test_autostart):
+                  self.test_formats, self.test_pauses, self.test_slow, self.test_faults, self.test_rx_tick_config, self.test_bridge, self.test_capture, self.test_pulltest, self.test_can, self.test_logic_analyzer, self.test_autostart):
             self.log("%s: %s" % (t.__name__[5:], (t.__doc__ or "").strip().splitlines()[0] if t.__doc__ else ""))
             t()
         self.dev.reset()

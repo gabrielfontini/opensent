@@ -18,13 +18,25 @@ class DeviceError(RuntimeError):
     pass
 
 
-def find_ports() -> List[str]:
-    """Serial ports whose USB product string is OpenSENT."""
+def _ports(logic_analyzer: bool) -> List[str]:
     out = []
     for p in serial.tools.list_ports.comports():
-        if (p.product or "") == USB_PRODUCT or (p.manufacturer or "") == USB_PRODUCT:
+        if (p.product or "") != USB_PRODUCT and (p.manufacturer or "") != USB_PRODUCT:
+            continue
+        is_la = "logic" in (p.interface or "").lower() or (p.location or "").endswith(".2")
+        if is_la == logic_analyzer:
             out.append(p.device)
     return sorted(out)
+
+
+def find_ports() -> List[str]:
+    """Control ports (USB product OpenSENT, first CDC interface)."""
+    return _ports(False)
+
+
+def find_la_ports() -> List[str]:
+    """SUMP / OLS logic-analyzer ports (second CDC interface), for sigrok's ols driver."""
+    return _ports(True)
 
 
 @dataclass

@@ -62,6 +62,11 @@ int         hw_cfg_load(char *buf, unsigned max); /* bytes, or -1 if nothing val
 bool        hw_cfg_store(const char *buf, unsigned len);
 bool        hw_boot_skip(void); /* user asked to skip the startup script (button held) */
 
+/* logic analyzer (second USB port, SUMP protocol): sampled port, status, test signal */
+bool        hw_la_port(char name);
+const char *hw_la_info(void);
+bool        hw_la_testsig(uint32_t hz);
+
 void hw_bootloader(void);
 /* hang on purpose to prove the watchdog resets the board; false if unsupported */
 bool hw_watchdog_test(void);

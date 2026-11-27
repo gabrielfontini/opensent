@@ -1145,7 +1145,7 @@ static err_t execute(char *s)
              "RXn:LAST?,RXn:VAL?,RXn:STAT?,RXn:SLOW?,RXn:RAW?,RXn:CAP[?],RXn:CAP:DATA?,RXn:PULLTEST,"
              "BRIDGEn:STATE[?],BRIDGEn:MAP[?],BRIDGEn:FAIL[?],BRIDGEn:OUT?,DACn[?],DACn:MEAS?,"
              "CAN:STATE[?],CAN:BITRATE[?],CAN:MODE[?],CAN:MAP[?],CAN:SEND,CAN:STAT?,CAN:RX?,"
-             "CFG:ADD,CFG:CLR,CFG:LIST?,CFG:SAVE,CFG:LOAD,CFG:INFO?");
+             "CFG:ADD,CFG:CLR,CFG:LIST?,CFG:SAVE,CFG:LOAD,CFG:INFO?,LA:INFO?,LA:PORT,LA:TESTSIG");
         return E_OK;
     }
     if (ieq(c.hdr, "PINS") && c.query) {
@@ -1198,6 +1198,26 @@ static err_t execute(char *s)
             outf("OK");
         }
         return e;
+    }
+    if ((sub = node(&c, "LA")) != NULL && c.idx < 0) {
+        uint32_t u;
+        if (ieq(sub, "INFO") && c.query) {
+            outf("%s", hw_la_info());
+            return E_OK;
+        }
+        if (ieq(sub, "PORT") && !c.query) {
+            if (need_arg(&c) || strlen(c.arg) != 1) return E_MISSING;
+            if (!hw_la_port((char)toupper((unsigned char)c.arg[0]))) return E_ILLEGAL;
+            outf("OK");
+            return E_OK;
+        }
+        if (ieq(sub, "TESTSIG") && !c.query) {
+            if (!parse_uint(c.arg, &u)) return E_DATA;
+            if (!hw_la_testsig(u)) return E_RANGE;
+            outf("OK");
+            return E_OK;
+        }
+        return E_UNDEF;
     }
     if ((sub = node(&c, "CFG")) != NULL && c.idx < 0) {
         err_t e = cmd_cfg(&c, sub);

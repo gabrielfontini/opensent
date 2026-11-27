@@ -8,6 +8,7 @@ MEMORY
   FLASH  (rx)  : ORIGIN = 0x08000000, LENGTH = 128K
   DTCM   (rw)  : ORIGIN = 0x20000000, LENGTH = 128K
   AXISRAM (rw) : ORIGIN = 0x24000000, LENGTH = 512K
+  SRAM12 (rw)  : ORIGIN = 0x30000000, LENGTH = 256K   /* D2: logic-analyzer buffer, next to DMA2 */
 }
 
 _estack = ORIGIN(DTCM) + LENGTH(DTCM);
@@ -64,6 +65,8 @@ SECTIONS
     . = . + _Min_Heap_Size;
     . = ALIGN(8);
   } >AXISRAM
+
+  .sram12 (NOLOAD) : { . = ALIGN(4); *(.sram12) *(.sram12*) } >SRAM12
 
   .noinit (NOLOAD) : { . = ALIGN(4); *(.noinit) *(.noinit*) . = ALIGN(4); } >DTCM
   ._stack_check (NOLOAD) : { . = ALIGN(8); . = . + _Min_Stack_Size; } >DTCM

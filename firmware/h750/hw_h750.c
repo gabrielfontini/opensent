@@ -24,6 +24,7 @@
 #include "clock.h"
 #include "hw.h"
 #include "qspi_flash.h"
+#include "la.h"
 
 #define TX_RING   32u    /* pulses in the TX DMA ring (two halves) */
 #define RX_RING   4096u  /* timestamps per capture ring (power of two) */
@@ -747,6 +748,54 @@ bool hw_boot_skip(void)
     for (volatile int i = 0; i < 1000; i++) {
     }
     return (GPIOC->IDR >> 13) & 1u;
+}
+
+/* ------------------------------------------------------------ logic analyzer glue */
+bool hw_la_port(char name)
+{
+    return la_set_port(name);
+}
+
+const char *hw_la_info(void)
+{
+    static char b[160];
+    uint32_t isr, wr;
+    uint16_t f[4];
+    la_debug(&isr, &wr, f);
+    snprintf(b, sizeof b, "port=%c state=%s captures=%lu rate=%lu max=%lu dma=%lX n=%lu s0=%04X",
+             la_port(), la_state(), (unsigned long)la_captures(), (unsigned long)la_rate(),
+             (unsigned long)LA_MAX_RATE, (unsigned long)isr, (unsigned long)wr, f[0]);
+    return b;
+}
+
+/* test signal: 50 % square wave on PB0 (TIM3_CH3) and half that on PB1 (TIM3_CH4, toggle) */
+bool hw_la_testsig(uint32_t hz)
+{
+    RCC->APB1LENR |= RCC_APB1LENR_TIM3EN;
+    (void)RCC->APB1LENR;
+    TIM3->CR1 = 0;
+    if (!hz) {
+        gpio_mode(GPIOB, 0, 0, 0);
+        gpio_mode(GPIOB, 1, 0, 0);
+        return true;
+    }
+    uint32_t ticks = clock_timer_hz / hz; /* timer clocks per period */
+    uint32_t psc = ticks / 65536u;
+    uint32_t arr = ticks / (psc + 1u);
+    if (hz > clock_timer_hz / 4u || arr < 4u) {
+        return false;
+    }
+    TIM3->PSC = psc;
+    TIM3->ARR = arr - 1u;
+    TIM3->CCR3 = arr / 2u;
+    TIM3->CCR4 = 0;
+    TIM3->CCMR2 = (6u << TIM_CCMR2_OC3M_Pos) | TIM_CCMR2_OC3PE | (3u << TIM_CCMR2_OC4M_Pos); /* PWM1, toggle */
+    TIM3->CCER = TIM_CCER_CC3E | TIM_CCER_CC4E;
+    TIM3->EGR = TIM_EGR_UG;
+    gpio_mode(GPIOB, 0, 2, 2);
+    gpio_mode(GPIOB, 1, 2, 2);
+    TIM3->CR1 = TIM_CR1_ARPE | TIM_CR1_CEN;
+    return true;
 }
 
 /* ------------------------------------------------------------ boot */

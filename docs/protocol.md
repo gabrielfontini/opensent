@@ -180,3 +180,24 @@ CFG:SAVE
 ```
 
 or from the PC: `opensent autostart --set "RX0:STATE ON" "BRIDGE1:STATE ON" ...`.
+
+## Logic analyzer (second USB port)
+
+The board enumerates **two** serial ports: interface 0 (`OpenSENT control`) speaks this protocol, and interface 2 (`OpenSENT logic analyzer`) speaks the **SUMP / Openbench Logic Sniffer** binary protocol. The second one works with the stock `ols` driver of sigrok and PulseView:
+
+```bash
+sigrok-cli -d ols:conn=/dev/ttyACM1 --config samplerate=10m --samples 100000 \
+           -P sent:data=10 -A sent=fc1          # SENT on PB10, decoded by the OpenSENT PD
+pulseview                                        # Connect to device -> Openbench Logic Sniffer -> serial port
+```
+
+- **16 channels:** a whole GPIO port, sampled by TIM8 + DMA2 into a 131,064-sample buffer in D2 SRAM.
+- **Sample rates:** 100 MHz / n, up to **33.3 MS/s**. In testing, every rate up to 33.3 MS/s was exact, without lost or jittered samples, even with SENT TX/RX and USB streaming running. At 50 MS/s the DMA cannot keep up, so that rate is not offered.
+- **Trigger:** one parallel stage (mask/value, levels), with a pre-trigger ratio.
+- **Not supported:** RLE and the advanced trigger stages.
+
+| Control command | Description |
+|---|---|
+| `LA:PORT A\|B\|C\|D\|E` | port sampled as channels 0–15 (default B: channel 10 = SENT TX PB10, channels 0/1 = test signal) |
+| `LA:TESTSIG <hz>` | square wave on PB0 (TIM3) and half its frequency on PB1; 0 turns it off |
+| `LA:INFO?` | `port= state= captures= rate= max= ...` |

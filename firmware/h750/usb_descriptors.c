@@ -26,16 +26,15 @@ static const tusb_desc_device_t k_device = {
 
 const uint8_t *tud_descriptor_device_cb(void) { return (const uint8_t *)&k_device; }
 
-enum { ITF_NUM_CDC = 0, ITF_NUM_CDC_DATA, ITF_NUM_TOTAL };
+/* two CDC ports: the control protocol and the SUMP/OLS logic analyzer */
+enum { ITF_NUM_CDC0 = 0, ITF_NUM_CDC0_DATA, ITF_NUM_CDC1, ITF_NUM_CDC1_DATA, ITF_NUM_TOTAL };
 
-#define EPNUM_CDC_NOTIF  0x81
-#define EPNUM_CDC_OUT    0x02
-#define EPNUM_CDC_IN     0x82
-#define CONFIG_TOTAL_LEN (TUD_CONFIG_DESC_LEN + TUD_CDC_DESC_LEN)
+#define CONFIG_TOTAL_LEN (TUD_CONFIG_DESC_LEN + 2 * TUD_CDC_DESC_LEN)
 
 static const uint8_t k_config[] = {
     TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_TOTAL, 0, CONFIG_TOTAL_LEN, 0x00, 100),
-    TUD_CDC_DESCRIPTOR(ITF_NUM_CDC, 4, EPNUM_CDC_NOTIF, 8, EPNUM_CDC_OUT, EPNUM_CDC_IN, 64),
+    TUD_CDC_DESCRIPTOR(ITF_NUM_CDC0, 4, 0x81, 8, 0x02, 0x82, 64),
+    TUD_CDC_DESCRIPTOR(ITF_NUM_CDC1, 5, 0x83, 8, 0x04, 0x84, 64),
 };
 
 const uint8_t *tud_descriptor_configuration_cb(uint8_t index)
@@ -58,7 +57,8 @@ const uint16_t *tud_descriptor_string_cb(uint8_t index, uint16_t langid)
     case 1: s = "OpenSENT"; break;
     case 2: s = "OpenSENT"; break;
     case 3: s = hw_uid(); break;
-    case 4: s = "OpenSENT CDC"; break;
+    case 4: s = "OpenSENT control"; break;
+    case 5: s = "OpenSENT logic analyzer"; break;
     default: return NULL;
     }
     size_t n = strlen(s);

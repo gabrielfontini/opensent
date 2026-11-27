@@ -48,7 +48,7 @@ set(ROOT ${CMAKE_CURRENT_LIST_DIR}/../..)
 set(TUSB ${TINYUSB_PATH}/src)
 
 add_executable(opensent
-  main.c clock.c hw_h750.c qspi_flash.c usb_descriptors.c syscalls.c
+  main.c clock.c hw_h750.c qspi_flash.c la.c usb_descriptors.c syscalls.c
   ${ROOT}/firmware/app/app.c
   ${ROOT}/core/sent_common.c ${ROOT}/core/sent_rx.c ${ROOT}/core/sent_tx.c
   ${CMSIS_H7_PATH}/Source/Templates/gcc/startup_stm32h750xx.s

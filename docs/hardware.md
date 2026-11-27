@@ -83,6 +83,8 @@ Then map in volts at the DAC, for example `BRIDGE1:MAP RX0,FC1,193,3896,0.333,3.
 | ADC2 | DAC read-back through internal channels 16 and 17, 16 bit, linearity calibrated |
 | FDCAN1 | SENT → CAN gateway; message RAM: RX FIFO0 8 elements, TX FIFO 4 elements |
 | DWT | cycle-accurate bit-bang for `RXn:PULLTEST` |
+| TIM8 + DMA2 Stream0 | logic-analyzer sample clock; GPIOx->IDR to a 2 x 65,532-sample double buffer in D2 SRAM1/2. Keeping the buffer in D2, next to DMA2, removed the ±1-sample jitter that the AXI SRAM showed |
+| TIM3 | logic-analyzer test signal on PB0/PB1 |
 | QUADSPI | W25Q64 on-board flash (PB2, PB6, PD11-13, PE2), sector 0 = startup script |
 | IWDG1 | 0.5 s watchdog, refreshed by the main loop |
 | K1 (PC13) | held at boot = skip the startup script |

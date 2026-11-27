@@ -71,6 +71,9 @@ const char *hw_cfg_info(void) { return "SIM-RAM"; }
 int hw_cfg_load(char *buf, unsigned max) { if (cfg_len < 0 || (unsigned)cfg_len > max) return -1; memcpy(buf, cfg_store, (size_t)cfg_len); return cfg_len; }
 bool hw_cfg_store(const char *buf, unsigned len) { if (len > sizeof cfg_store) return false; memcpy(cfg_store, buf, len); cfg_len = len ? (int)len : -1; return true; }
 bool hw_boot_skip(void) { return false; }
+bool hw_la_port(char n) { (void)n; return false; }
+const char *hw_la_info(void) { return "none"; }
+bool hw_la_testsig(uint32_t hz) { (void)hz; return false; }
 float       hw_dac_meas(unsigned ch) { return ch < HW_DAC_CHANNELS ? dac[ch] : -1.0f; }
 
 void hw_write(const char *s, unsigned n)

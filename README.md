@@ -11,6 +11,7 @@ OpenSENT puts the whole workflow on one WeAct STM32H750 core board and a USB cab
 | **Sensor emulator** | Generates bit-exact SENT frames on a pin: tick 0.5–100 µs, 1–8 data nibbles, all three CRC variants, pause pulses (fixed / constant frame length), short and enhanced serial messages, waveforms (sine, triangle, ramp, square, counter) to simulate a moving throttle, and **fault injection** (CRC, sync, nibble range, missing / extra nibble, calibration drift, serial CRC). |
 | **Analyzer** | 2 independent input-capture receivers at 5 ns resolution, plus a monitor of the TX pin. Decodes fast channels, short / enhanced serial messages, and learns nibble count and CRC variant. Checks successive-calibration drift (1/64 rule), reports tick deviation and nibble timing margin, and keeps error statistics per type. |
 | **SENT → CAN gateway** | Sends the decoded values on CAN (FDCAN, 11-bit ID, configurable rate and bitrate) with a valid flag, error count, counter and data age, so an ECU or logger with a CAN input can use a SENT sensor. |
+| **Logic analyzer** | A second USB port speaks the SUMP / Openbench Logic Sniffer protocol: 16 channels, up to 33.3 MS/s, 128 K samples, parallel trigger. It works with the stock PulseView / sigrok `ols` driver, so the same board probes the SENT line and the rest of the ECU harness. |
 | **Raw capture** | Two-edge capture of a SENT line, exported as VCD/CSV for PulseView. |
 | **PulseView decoder** | A SENT protocol decoder for sigrok / PulseView (libsigrokdecode does not ship one). |
 | **SENT → analog bridge** | Maps a decoded fast channel to a DAC voltage (0–3.3 V, scalable to 0–5 V), with a fail-safe voltage on sensor loss. It lets an aftermarket ECU read a SENT-only sensor. The output is measured back on chip. |
@@ -38,11 +39,13 @@ OpenSENT self test on /dev/ttyACM0 (WeAct-H750), channels RX2
   PASS  bridge fail-safe on sensor loss    commanded=0.2500 measured=0.2491 state=FAIL
   PASS  CAN gateway frames (loopback)      id=0x5A0 len=8 data=04D20C8A8000F001, 200 frames/s, drops=0
   PASS  CAN gateway flags sensor loss      id=0x5A0 len=8 data=0000000000000F97
+  PASS  LA 33.3 MS/s timing (1 MHz test signal) run lengths {16: 1200, 17: 2399}, mean 16.667 (expected 16.667)
+  PASS  LA capture of the SENT pin decodes frames=14 gaps=0
   PASS  watchdog reset + autostart from flash store=QSPI:EF4017 lines=5 bytes=86 boot=ran; fc1=777 bridge=0.6262,OK,0.6255
   PASS  RX2 capture -> PC decode           edges=4000 frames=221 ok=221 gaps=0 low=5.00 ticks
   PASS  RX0 capture path (pull bit-bang)   frames=299 ok=299 in-order=True tick=4998.8ns
   PASS  RX1 capture path (pull bit-bang)   frames=299 ok=299 in-order=True tick=4998.8ns
-PASS: 43/43 checks passed
+PASS: 48/48 checks passed
 ```
 
 How it works without wires:
@@ -76,7 +79,8 @@ A **WeAct Studio STM32H750VBT6 core board**: 400 MHz Cortex-M7, USB-C, ST-Link (
 | RX2 (monitor) | PB10 | EXTI10 timestamped with TIM5 |
 | Bridge out 1 / 2 | **PA4 / PA5** | DAC1 OUT1/OUT2, read back by ADC2 |
 | CAN RX / TX | **PD0 / PD1** | FDCAN1 (with an external transceiver) |
-| USB | PA11/PA12 | OTG FS, CDC (`OpenSENT`) |
+| Logic analyzer | GPIOB (default) | channels 0–15 = PB0–PB15; test signal on PB0/PB1 |
+| USB | PA11/PA12 | OTG FS, two CDC ports: control + SUMP logic analyzer |
 | LED | PE3 | |
 
 Connecting to real 5 V SENT devices takes two resistors and an op-amp. [docs/hardware.md](docs/hardware.md) covers the level shifting, the open-drain TX with a 5 V pull-up, and the 0–5 V bridge output.
@@ -143,6 +147,12 @@ cp -rL sigrok/sent ~/.local/share/libsigrokdecode/decoders/   # install the deco
 pulseview sensor.vcd                                           # add the "SENT" decoder
 ```
 
+Use it as a 16-channel logic analyzer in PulseView (Openbench Logic Sniffer driver, second serial port), or from the command line:
+
+```bash
+sigrok-cli -d ols:conn=/dev/ttyACM1 --config samplerate=10m --samples 100000 -P sent:data=10 -A sent=fc1
+```
+
 Open `web/index.html` in Chrome or Edge, then click **Connect device**, or click **Demo** to try it without hardware.
 
 ## Architecture
@@ -156,7 +166,7 @@ flowchart LR
   end
   subgraph fw["firmware/"]
     APP[app: protocol, channels, bridge, capture]
-    H7[h750: TIM2+DMA TX, TIM5+DMA RX, EXTI, DAC/ADC, FDCAN, USB]
+    H7[h750: TIM2+DMA TX, TIM5+DMA RX, EXTI, DAC/ADC, FDCAN, QSPI, SUMP LA, USB]
     SIM[sim: Linux pty, virtual loopback]
   end
   subgraph host["PC"]
