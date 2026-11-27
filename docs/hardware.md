@@ -89,3 +89,13 @@ Then map in volts at the DAC, for example `BRIDGE1:MAP RX0,FC1,193,3896,0.333,3.
 | IWDG1 | 0.5 s watchdog, refreshed by the main loop |
 | K1 (PC13) | held at boot = skip the startup script |
 | RAM | `.data` / `.bss` / DMA buffers in AXI SRAM (D-cache off); stack in DTCM |
+
+## Notes from bring-up
+
+- **No D-cache:** DMA buffers live in AXI or D2 SRAM, so they stay coherent without cache maintenance.
+- **Logic-analyzer timing:** DMA2 reads `GPIOx->IDR` across the D2 → D3 bus.
+  - A buffer in AXI SRAM, plus CPU writes to D3 peripherals on every main-loop pass (LED `BSRR`, `IWDG1->KR`), delayed some DMA reads. About 5 % of the edges at 10 MS/s were off by one sample.
+  - The fix was to move the buffer to D2 SRAM, write the LED only on change, and kick the watchdog at 100 Hz. After that, every rate up to 33.3 MS/s was exact under load. 50 MS/s still loses samples.
+- **DMA NDTR is 16 bit:** a ring larger than 65,535 items needs double-buffer mode. A 196 K ring silently became 0 and the stream never started.
+- **ROM bootloader and DFU `:leave`:** the bootloader bus-faults when asked to leave DFU, so press RESET after `dfu-util`. The firmware also resets itself if it finds the clocks already configured, i.e. when it was started by another program.
+- **Float vs double:** `3.3 > 3.3f` is true in C. Range checks against a float limit need a tolerance; a bridge mapped up to exactly 3.3 V used to be rejected.
