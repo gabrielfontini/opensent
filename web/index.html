@@ -99,6 +99,18 @@ th { color: var(--muted); font-weight: 500; }
       <label>Fail-safe<div class="row"><input id="bfail" type="number" step="0.05" value="0.25" title="volts"><input id="bto" type="number" value="100" title="timeout ms"></div></label>
       <div class="row"><button id="bon">Bridge OFF</button><span class="val" id="bout">-</span></div>
     </section>
+    <section>
+      <h2>SENT &rarr; CAN gateway</h2>
+      <label>Source / ID<div class="row"><select id="cch"><option value="0">RX0</option><option value="1">RX1</option><option value="2" selected>RX2</option></select><input id="cid" value="0x5A0"></div></label>
+      <label>Period / rate<div class="row"><input id="cper" type="number" value="10" title="ms"><select id="cbr"><option>500000</option><option>250000</option><option>1000000</option><option>125000</option></select></div></label>
+      <label>Mode<select id="cmode"><option value="NORMAL">normal (transceiver on PD0/PD1)</option><option value="LOOPBACK">internal loopback</option></select></label>
+      <div class="row"><button id="con">CAN OFF</button><span class="val" id="cstat">-</span></div>
+    </section>
+    <section>
+      <h2>Startup script (standalone)</h2>
+      <textarea id="script" rows="5" style="width:100%;font:12px var(--mono);background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:6px" placeholder="one command per line, runs at power-up&#10;RX0:STATE ON&#10;BRIDGE1:STATE ON"></textarea>
+      <div class="row"><button id="sload">Load from board</button><button id="ssave" class="primary">Save to flash</button><span class="hint" id="sinfo"></span></div>
+    </section>
   </div>
   <div class="col">
     <section>
@@ -249,6 +261,12 @@ class DemoTransport {
       else if (/^BRIDGE1:FAIL$/.test(h)) { const p = a.split(","); this.bridge.fail = +p[0]; }
       else if (/^BRIDGE1:STATE$/.test(h)) { this.bridge.en = a.toUpperCase() === "ON"; if (!this.bridge.en) this.bridge.out = 0; }
       else if (/^BRIDGE1:OUT\?$/.test(h)) r = `${this.bridge.out.toFixed(4)},${this.bridge.en ? this.bridge.state || "FAIL" : "OFF"},${this.bridge.out.toFixed(4)}`;
+      else if (h.startsWith("CAN:")) { if (h === "CAN:STAT?") { this.canTx = (this.canTx || 0) + 50; r = `on=1 mode=LOOPBACK bitrate=500000 tx=${this.canTx} tx_drop=0 rx=${this.canTx} tec=0 rec=0 lec=0 bus_off=0`; } }
+      else if (h === "CFG:ADD") { (this.script = this.script || []).push(a); }
+      else if (h === "CFG:CLR") this.script = [];
+      else if (h === "CFG:LIST?") r = this.script && this.script.length ? this.script.join(" | ") : "EMPTY";
+      else if (h === "CFG:INFO?") r = `store=DEMO lines=${(this.script || []).length} boot=none`;
+      else if (h.startsWith("CFG:")) r = "OK";
       else r = 'ERR -113,"Undefined header"';
       out.push(r);
       if (r.startsWith("ERR")) break;
@@ -367,6 +385,7 @@ async function poll() {
   const slow = await query(`RX${chan}:SLOW?`, true);
   $("slowtab").innerHTML = slow === "NONE" || slow.startsWith("ERR") ? '<tr><td colspan="4" class="hint">none yet</td></tr>' :
     slow.split(",").map((it) => { const [fmt, rest] = it.split(":"); const [id, v] = rest.split("="); return `<tr><td>${fmt}</td><td>0x${(+id).toString(16).toUpperCase().padStart(2, "0")}</td><td>${v}</td><td>0x${(+v).toString(16).toUpperCase()}</td></tr>`; }).join("");
+  if (canOn) { const c = kv(await query("CAN:STAT?", true)); $("cstat").textContent = `tx ${c.tx} rx ${c.rx} drop ${c.tx_drop} tec ${c.tec}`; }
   if (bridgeOn) { const o = (await query("BRIDGE1:OUT?", true)).split(","); $("bout").textContent = `${(+o[0]).toFixed(3)} V ${o[1]}` + (o[2] >= 0 ? `  (meas ${(+o[2]).toFixed(3)} V)` : ""); }
 }
 
@@ -381,6 +400,32 @@ $("bon").onclick = async () => {
   }
   await query("BRIDGE1:STATE " + (bridgeOn ? "ON" : "OFF"));
   $("bon").textContent = bridgeOn ? "Bridge ON" : "Bridge OFF"; $("bon").className = bridgeOn ? "on" : "";
+};
+
+/* ------------------------------------------------------------ CAN + script */
+let canOn = false;
+$("con").onclick = async () => {
+  canOn = !canOn;
+  if (canOn) {
+    await query(`RX${$("cch").value}:STATE ON`);
+    await query(`CAN:MODE ${$("cmode").value}`); await query(`CAN:BITRATE ${$("cbr").value}`);
+    await query(`CAN:MAP RX${$("cch").value},${$("cid").value},${$("cper").value}`);
+  }
+  const r = await query("CAN:STATE " + (canOn ? "ON" : "OFF"));
+  if (r.startsWith("ERR")) canOn = false;
+  $("con").textContent = canOn ? "CAN ON" : "CAN OFF"; $("con").className = canOn ? "on" : "";
+};
+$("sload").onclick = async () => {
+  await query("CFG:LOAD"); const l = await query("CFG:LIST?");
+  $("script").value = l === "EMPTY" || l.startsWith("ERR") ? "" : l.split(" | ").join("\n");
+  $("sinfo").textContent = await query("CFG:INFO?", true);
+};
+$("ssave").onclick = async () => {
+  await query("CFG:CLR");
+  for (const line of $("script").value.split("\n").map((x) => x.trim()).filter(Boolean)) {
+    const r = await query("CFG:ADD " + line); if (r.startsWith("ERR")) { $("sinfo").textContent = "rejected: " + line; return; }
+  }
+  const r = await query("CFG:SAVE"); $("sinfo").textContent = r.startsWith("ERR") ? r : "saved - " + await query("CFG:INFO?", true);
 };
 
 /* ------------------------------------------------------------ console */
