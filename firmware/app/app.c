@@ -22,7 +22,7 @@
 #define FW_VERSION "0.1.0"
 #define RAW_KEEP   64u
 #define LINE_MAX   200u
-#define OUT_MAX    1024u
+#define OUT_MAX    2048u /* CAP:DATA? can return 100 x 10 digits */
 #define VMAX       ((double)hw_dac_max() + 1e-4) /* float 3.3f < double 3.3 */
 
 typedef struct {
@@ -769,7 +769,9 @@ static err_t cmd_rx(cmd_t *c, const char *sub)
         /* wire-free receiver test: frames with FC1 counting from 0, FC2 = 0x5A5 */
         if (!parse_uint(c->arg, &u)) return E_DATA;
         if (u < 1 || u > 2000) return E_RANGE;
-        if (!x->en || ch > 1) return E_STATE;
+        /* interrupts are off for ~0.6 ms per frame: the TX DMA ring and the
+         * monitor would glitch, so the transmitter must be off */
+        if (!x->en || ch > 1 || S.tx_on) return E_STATE;
         static sent_tx_t gen;
         sent_tx_cfg_t gc;
         sent_tx_cfg_default(&gc);

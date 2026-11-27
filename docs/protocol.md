@@ -94,7 +94,7 @@ Fault types:
 | `RXn:CAP <edges>` | arm a raw two-edge capture (2 … 8192 edges); decoding pauses on that channel meanwhile |
 | `RXn:CAP?` | `state=IDLE\|RUN\|DONE ch= n= target= level0= clk=` |
 | `RXn:CAP:DATA? <offset>,<count>` | up to 100 edge-to-edge intervals in timer clocks; `END` past the end |
-| `RXn:PULLTEST <frames>` | RX0/RX1 only, pin left **unconnected**. Bit-bangs frames on the pin through its internal pull-up / pull-down (tick 5 µs, FC1 counting from 0, FC2 = 0x5A5), to test the real capture path without wires |
+| `RXn:PULLTEST <frames>` | RX0/RX1 only, pin left **unconnected**. Bit-bangs frames on the pin through its internal pull-up / pull-down (tick 5 µs, FC1 counting from 0, FC2 = 0x5A5), to test the real capture path without wires. Refused (`-221`) while TX is on, because interrupts are paused for each bit-banged frame |
 
 `RXn:STAT?` fields: `en lock frames ok crc nibble length short sync pauses cal margin glitches resyncs pulses overruns n crc_mode tick_ns slow_ok slow_err`.
 
