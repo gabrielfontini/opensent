@@ -52,6 +52,8 @@ def test_mcp_server_on_simulator(sim_port):
         {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2024-11-05"}},
         {"jsonrpc": "2.0", "method": "notifications/initialized"},
         {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+        {"jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": {"name": "sent_receiver", "arguments": {
+            "channel": 2}}},
         {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "sent_emulate", "arguments": {
             "enabled": True, "fc1": 1000, "fc2": 2000}}},
         {"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "sent_receiver", "arguments": {
@@ -60,11 +62,11 @@ def test_mcp_server_on_simulator(sim_port):
     env = dict(os.environ, OPENSENT_PORT=sim_port)
     p = subprocess.Popen([sys.executable, "-m", "opensent.mcp_server"], stdin=subprocess.PIPE,
                          stdout=subprocess.PIPE, text=True, env=env)
-    for m in msgs[:4]:
+    for m in msgs[:5]:
         p.stdin.write(json.dumps(m) + "\n")
     p.stdin.flush()
     time.sleep(0.5)
-    p.stdin.write(json.dumps(msgs[4]) + "\n")
+    p.stdin.write(json.dumps(msgs[5]) + "\n")
     p.stdin.close()
     out = [json.loads(line) for line in p.stdout]
     p.wait(timeout=10)
