@@ -49,6 +49,13 @@ float hw_dac_max(void);
 void  hw_dac(unsigned ch, float volts);
 float hw_dac_meas(unsigned ch); /* measured output (V), < 0 if unsupported */
 
+/* CAN (classic, 11-bit IDs). loopback = internal, no transceiver needed */
+bool hw_can_start(uint32_t bitrate, bool loopback);
+void hw_can_stop(void);
+bool hw_can_send(uint32_t id, const uint8_t *d, uint8_t len);
+bool hw_can_recv(uint32_t *id, uint8_t *d, uint8_t *len);
+void hw_can_status(uint32_t *tec, uint32_t *rec, uint32_t *psr);
+
 void hw_bootloader(void);
 
 #endif

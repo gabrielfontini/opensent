@@ -57,8 +57,21 @@ static struct {
     bool     level0;    /* line level before the first captured edge */
     uint32_t n, target;
     uint32_t first, last;
+    uint32_t ovr;       /* edges lost while capturing (capture unusable) */
     uint32_t d[CAP_MAX]; /* intervals between consecutive edges (clocks) */
 } CAP;
+
+/* SENT -> CAN gateway: one mapping per receive channel */
+static struct {
+    bool     on, loopback;
+    uint32_t bitrate;
+    uint32_t id[HW_RX_CHANNELS], period_ms[HW_RX_CHANNELS], last_ms[HW_RX_CHANNELS];
+    uint32_t err_mark[HW_RX_CHANNELS];
+    uint8_t  counter[HW_RX_CHANNELS];
+    uint32_t tx, tx_drop, rx;
+    uint32_t rx_id;
+    uint8_t  rx_d[8], rx_len;
+} CAN;
 
 static struct {
     sent_tx_t     tx;
@@ -251,6 +264,9 @@ static void defaults(void)
         b->timeout_ms = 100;
         hw_dac(i, 0.0f);
     }
+    hw_can_stop();
+    memset(&CAN, 0, sizeof CAN);
+    CAN.bitrate = 500000;
     S.stream_mask = 0;
     S.stream_every = 1;
     S.last_err = 0;
@@ -721,9 +737,9 @@ static err_t cmd_rx(cmd_t *c, const char *sub)
         else return E_ILLEGAL;
     } else if (ieq(sub, "CAP")) {
         if (c->query) {
-            outf("state=%s ch=%u n=%lu target=%lu level0=%d clk=%lu", CAP.active ? "RUN" : (CAP.done ? "DONE" : "IDLE"),
-                 CAP.ch, (unsigned long)CAP.n, (unsigned long)CAP.target, CAP.level0,
-                 (unsigned long)hw_rx_clk());
+            outf("state=%s ch=%u n=%lu target=%lu level0=%d clk=%lu ovr=%lu",
+                 CAP.active ? "RUN" : (CAP.done ? "DONE" : "IDLE"), CAP.ch, (unsigned long)CAP.n,
+                 (unsigned long)CAP.target, CAP.level0, (unsigned long)hw_rx_clk(), (unsigned long)CAP.ovr);
             return E_OK;
         }
         if (!parse_uint(c->arg, &u)) return E_DATA;
@@ -909,6 +925,107 @@ static err_t cmd_bridge(cmd_t *c, const char *sub)
     return E_UNDEF;
 }
 
+static err_t cmd_can(cmd_t *c, const char *sub)
+{
+    char *av[4];
+    uint32_t u, ch, id, per;
+    if (ieq(sub, "STATE")) {
+        if (c->query) {
+            outf("%d", CAN.on);
+            return E_OK;
+        }
+        bool on;
+        if (need_arg(c) || !parse_bool(c->arg, &on)) return E_ILLEGAL;
+        if (on) {
+            if (!hw_can_start(CAN.bitrate, CAN.loopback)) return E_STATE;
+        } else {
+            hw_can_stop();
+        }
+        CAN.on = on;
+        return E_OK;
+    }
+    if (ieq(sub, "BITRATE")) {
+        if (c->query) {
+            outf("%lu", (unsigned long)CAN.bitrate);
+            return E_OK;
+        }
+        if (!parse_uint(c->arg, &u)) return E_DATA;
+        if (u < 10000 || u > 1000000 || 25000000u % (25u * u)) return E_RANGE;
+        CAN.bitrate = u;
+        return CAN.on ? (hw_can_start(u, CAN.loopback) ? E_OK : E_STATE) : E_OK;
+    }
+    if (ieq(sub, "MODE")) {
+        if (c->query) {
+            outf("%s", CAN.loopback ? "LOOPBACK" : "NORMAL");
+            return E_OK;
+        }
+        if (need_arg(c)) return E_MISSING;
+        if (ieq(c->arg, "LOOPBACK")) CAN.loopback = true;
+        else if (ieq(c->arg, "NORMAL")) CAN.loopback = false;
+        else return E_ILLEGAL;
+        return CAN.on ? (hw_can_start(CAN.bitrate, CAN.loopback) ? E_OK : E_STATE) : E_OK;
+    }
+    if (ieq(sub, "MAP")) {
+        if (c->query) {
+            for (unsigned i = 0; i < HW_RX_CHANNELS; i++) {
+                outf("%sRX%u=0x%03lX/%lums", i ? "," : "", i, (unsigned long)CAN.id[i],
+                     (unsigned long)CAN.period_ms[i]);
+            }
+            return E_OK;
+        }
+        unsigned n = split(c->arg, av, 4);
+        if (n < 2) return E_MISSING;
+        const char *a0 = av[0];
+        if (toupper((unsigned char)a0[0]) == 'R') a0 += 2;
+        per = 10;
+        if (!parse_uint(a0, &ch) || !parse_uint(av[1], &id) || (n >= 3 && !parse_uint(av[2], &per))) return E_DATA;
+        if (ch >= HW_RX_CHANNELS || id > 0x7FF || per < 1 || per > 10000) return E_RANGE;
+        CAN.id[ch] = id; /* 0 disables */
+        CAN.period_ms[ch] = per;
+        CAN.err_mark[ch] = 0;
+        return E_OK;
+    }
+    if (ieq(sub, "SEND")) {
+        uint8_t d[8];
+        if (split(c->arg, av, 3) != 2 || !parse_uint(av[0], &id)) return E_MISSING;
+        size_t len = strlen(av[1]);
+        if (id > 0x7FF || len % 2 || len > 16) return E_RANGE;
+        for (size_t i = 0; i < len / 2; i++) {
+            char h[3] = {av[1][2 * i], av[1][2 * i + 1], 0};
+            if (!isxdigit((unsigned char)h[0]) || !isxdigit((unsigned char)h[1])) return E_DATA;
+            d[i] = (uint8_t)strtoul(h, NULL, 16);
+        }
+        if (!CAN.on) return E_STATE;
+        if (!hw_can_send(id, d, (uint8_t)(len / 2))) {
+            CAN.tx_drop++;
+            return E_STATE;
+        }
+        CAN.tx++;
+        return E_OK;
+    }
+    if (ieq(sub, "STAT") && c->query) {
+        uint32_t tec, rec, psr;
+        hw_can_status(&tec, &rec, &psr);
+        outf("on=%d mode=%s bitrate=%lu tx=%lu tx_drop=%lu rx=%lu tec=%lu rec=%lu lec=%lu bus_off=%lu", CAN.on,
+             CAN.loopback ? "LOOPBACK" : "NORMAL", (unsigned long)CAN.bitrate, (unsigned long)CAN.tx,
+             (unsigned long)CAN.tx_drop, (unsigned long)CAN.rx, (unsigned long)tec, (unsigned long)rec,
+             (unsigned long)(psr & 7u), (unsigned long)((psr >> 7) & 1u));
+        return E_OK;
+    }
+    if (ieq(sub, "RX") && c->query) {
+        if (!CAN.rx) {
+            outf("NONE");
+            return E_OK;
+        }
+        outf("id=0x%03lX len=%u data=", (unsigned long)CAN.rx_id, CAN.rx_len);
+        for (unsigned i = 0; i < CAN.rx_len; i++) {
+            outf("%02X", CAN.rx_d[i]);
+        }
+        return E_OK;
+    }
+    return E_UNDEF;
+}
+
 static err_t execute(char *s)
 {
     while (*s == ' ' || *s == ':') {
@@ -956,7 +1073,8 @@ static err_t execute(char *s)
              "TX:WAVE[?],TX:RAW[?],TX:PAUSE[?],TX:SLOW[?],TX:SLOW:ADD,TX:SLOW:CLR,TX:FAULT[?],TX:DRIVE[?],TX:INFO?,"
              "RXn:STATE[?],RXn:POL[?],RXn:TICK[?],RXn:NIB[?],RXn:CRC[?],RXn:FMT[?],RXn:PAUSE[?],RXn:CLR,"
              "RXn:LAST?,RXn:VAL?,RXn:STAT?,RXn:SLOW?,RXn:RAW?,RXn:CAP[?],RXn:CAP:DATA?,RXn:PULLTEST,"
-             "BRIDGEn:STATE[?],BRIDGEn:MAP[?],BRIDGEn:FAIL[?],BRIDGEn:OUT?,DACn[?],DACn:MEAS?");
+             "BRIDGEn:STATE[?],BRIDGEn:MAP[?],BRIDGEn:FAIL[?],BRIDGEn:OUT?,DACn[?],DACn:MEAS?,"
+             "CAN:STATE[?],CAN:BITRATE[?],CAN:MODE[?],CAN:MAP[?],CAN:SEND,CAN:STAT?,CAN:RX?");
         return E_OK;
     }
     if (ieq(c.hdr, "PINS") && c.query) {
@@ -1002,6 +1120,13 @@ static err_t execute(char *s)
     }
     if ((sub = node(&c, "RX")) != NULL) {
         err_t e = cmd_rx(&c, sub);
+        if (e == E_OK && !c.query) {
+            outf("OK");
+        }
+        return e;
+    }
+    if ((sub = node(&c, "CAN")) != NULL && c.idx < 0) {
+        err_t e = cmd_can(&c, sub);
         if (e == E_OK && !c.query) {
             outf("OK");
         }
@@ -1102,6 +1227,9 @@ static void process_channel(unsigned ch)
         if (ovr) {
             x->overruns += ovr;
             x->have_prev = false; /* lost edges: restart interval chain */
+            if (CAP.active && CAP.ch == ch) {
+                CAP.ovr += ovr;
+            }
         }
         if (!n) {
             break;
@@ -1186,12 +1314,52 @@ static void bridges(void)
     }
 }
 
+/* SENT -> CAN: 8 bytes, big endian
+ *  0-1 FC1, 2-3 FC2, 4 status nibble | 0x80 valid, 5 errors since the
+ *  previous message (saturated), 6 rolling counter, 7 data age in ms */
+static void can_gateway(void)
+{
+    if (!CAN.on) {
+        return;
+    }
+    uint32_t id, now = hw_millis();
+    uint8_t d[8], len;
+    while (hw_can_recv(&id, d, &len)) {
+        CAN.rx++;
+        CAN.rx_id = id;
+        CAN.rx_len = len;
+        memcpy(CAN.rx_d, d, len);
+    }
+    for (unsigned ch = 0; ch < HW_RX_CHANNELS; ch++) {
+        if (!CAN.id[ch] || now - CAN.last_ms[ch] < CAN.period_ms[ch]) {
+            continue;
+        }
+        CAN.last_ms[ch] = now;
+        const chan_t *x = &S.ch[ch];
+        uint32_t age = x->have_ok ? now - x->last_ok_ms : 0xFFFFFFFFu;
+        bool valid = x->en && x->have_ok && age <= 3u * CAN.period_ms[ch] + 10u;
+        uint32_t errs = x->rx.st.frames - x->rx.st.ok;
+        uint32_t de = errs - CAN.err_mark[ch];
+        CAN.err_mark[ch] = errs;
+        uint32_t f1 = valid ? x->last_ok.fc1 : 0, f2 = valid ? x->last_ok.fc2 : 0;
+        uint8_t m[8] = {(uint8_t)(f1 >> 8), (uint8_t)f1, (uint8_t)(f2 >> 8), (uint8_t)f2,
+                        (uint8_t)((valid ? 0x80u : 0u) | (x->last_ok.status & 0xFu)), (uint8_t)(de > 255 ? 255 : de),
+                        CAN.counter[ch]++, (uint8_t)(age > 255 ? 255 : age)};
+        if (hw_can_send(CAN.id[ch], m, 8)) {
+            CAN.tx++;
+        } else {
+            CAN.tx_drop++;
+        }
+    }
+}
+
 void app_task(void)
 {
     for (unsigned ch = 0; ch < HW_RX_CHANNELS; ch++) {
         process_channel(ch);
     }
     bridges();
+    can_gateway();
     uint32_t now = hw_millis();
     /* LED: on while good frames arrive, slow blink when idle, fast if TX only */
     bool led = (now - S.led_ms < 50u) ? ((now / 25u) & 1u) : (S.tx_on ? ((now / 100u) & 1u) : ((now / 500u) & 1u));

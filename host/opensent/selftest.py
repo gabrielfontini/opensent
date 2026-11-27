@@ -40,6 +40,11 @@ class Report:
 ERR_KEYS = ("crc", "nibble", "length", "short", "sync")
 
 
+def parse_can(s: str) -> dict:
+    from .device import parse_kv
+    return parse_kv(s)
+
+
 def _delta(a: dict, b: dict) -> dict:
     return {k: b[k] - a[k] for k in b if isinstance(b.get(k), int) and isinstance(a.get(k), int)}
 
@@ -235,8 +240,9 @@ class SelfTest:
         time.sleep(0.1)
         for ch in self.chans:
             level0, clk, times = self.dev.capture(ch, 4000)
+            # edges alternate; pair every falling edge with the rising edge after it
             fall = times[0::2] if level0 else times[1::2]
-            rise = times[1::2] if level0 else times[0::2]
+            rise = times[1::2] if level0 else times[2::2]
             lows = [r - f for f, r in zip(fall, rise)]
             frames = list(codec.Decoder(clk_hz=1.0, nibbles=6).decode_edges(fall))
             good = [f for f in frames if f.ok]
@@ -270,12 +276,33 @@ class SelfTest:
             self._check("RX%d capture path (pull bit-bang)" % ch, ok,
                         "frames=%d ok=%d in-order=%s tick=%.1fns" % (st["frames"], st["ok"], seq_ok, st["tick_ns"]))
 
+    def test_can(self) -> None:
+        """SENT -> CAN gateway, FDCAN internal loopback (no transceiver)."""
+        self._setup("TX:FC1 1234", "TX:FC2 3210")
+        d = self.dev
+        for c in ("CAN:MODE LOOPBACK", "CAN:BITRATE 500000", "CAN:STATE ON", "CAN:MAP RX2,0x5A0,5"):
+            d.cmd(c)
+        time.sleep(0.2)
+        a = parse_can(d.query("CAN:STAT?"))
+        time.sleep(1.0)
+        b = parse_can(d.query("CAN:STAT?"))
+        rate = b["rx"] - a["rx"]
+        rx = d.query("CAN:RX?")
+        data = rx.split("data=")[1] if "data=" in rx else ""
+        ok = "id=0x5A0" in rx and data[:10] == "04D20C8A80" and 180 <= rate <= 210 and b["tx_drop"] == 0
+        self._check("CAN gateway frames (loopback)", ok, "%s, %d frames/s, drops=%d" % (rx, rate, b["tx_drop"]))
+        d.cmd("TX:STATE OFF")
+        time.sleep(0.15)
+        rx = d.query("CAN:RX?")
+        data = rx.split("data=")[1] if "data=" in rx else ""
+        self._check("CAN gateway flags sensor loss", data[8:10] == "00" and data[:8] == "00000000", rx)
+
     def run(self) -> Report:
         idn = self.dev.idn()
         self.log("OpenSENT self test on %s (%s), channels %s" % (self.dev.port, idn.split(",")[1],
                                                                 ",".join("RX%d" % c for c in self.chans)))
         for t in (self.test_counter, self.test_ticks, self.test_clock_error, self.test_crc_modes,
-                  self.test_formats, self.test_pauses, self.test_slow, self.test_faults, self.test_rx_tick_config, self.test_bridge, self.test_capture, self.test_pulltest):
+                  self.test_formats, self.test_pauses, self.test_slow, self.test_faults, self.test_rx_tick_config, self.test_bridge, self.test_capture, self.test_pulltest, self.test_can):
             self.log("%s: %s" % (t.__name__[5:], (t.__doc__ or "").strip().splitlines()[0] if t.__doc__ else ""))
             t()
         self.dev.reset()

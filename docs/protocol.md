@@ -123,3 +123,30 @@ At a 3 µs tick a sensor sends about 1600 frames/s. That fits in a USB FS link, 
 | `DACn <volts>` / `DACn?` / `DACn:MEAS?` | manual DAC (refused while the bridge drives it) and its read-back |
 
 The read-back is ratiometric: DAC and ADC share VREF+. It therefore checks the mapping and the output stage, not the absolute accuracy of the 3.3 V reference.
+
+## SENT → CAN gateway
+
+FDCAN1, classic CAN 2.0 with 11-bit IDs, on **PD0 (RX) / PD1 (TX)**. It needs an external transceiver (e.g. SN65HVD230 or TJA1051) in NORMAL mode, and nothing in LOOPBACK mode (internal loop, used by the self test).
+
+| Command | Description |
+|---|---|
+| `CAN:BITRATE <bps>` | 1 M, 500 k (default), 250 k, 125 k, 100 k, 50 k … (25 tq per bit, sample point 80 %, HSE kernel clock) |
+| `CAN:MODE NORMAL\|LOOPBACK` | |
+| `CAN:STATE ON\|OFF` | |
+| `CAN:MAP RX<ch>,<id>[,<period_ms>]` | send the values of receiver `ch` every `period_ms` (default 10); `id` 0 disables |
+| `CAN:SEND <id>,<hex>` | send one frame manually, e.g. `CAN:SEND 0x123,DEADBEEF` |
+| `CAN:STAT?` | `on mode bitrate tx tx_drop rx tec rec lec bus_off` |
+| `CAN:RX?` | last frame received (bus or loopback): `id=0x5A0 len=8 data=04D20C8A80001F01` |
+
+Payload (8 bytes, big endian):
+
+| Byte | Content |
+|---|---|
+| 0–1 | FC1 |
+| 2–3 | FC2 |
+| 4 | bit 7 = **valid** (a good frame arrived within 3 periods), bits 0–3 = status nibble |
+| 5 | SENT frame errors since the previous message (saturated at 255) |
+| 6 | rolling counter |
+| 7 | age of the data in ms (saturated at 255) |
+
+When the sensor is lost, FC1, FC2 and the valid bit go to 0 while the messages keep coming. A receiving ECU or logger can then tell "sensor fault" apart from "gateway dead".

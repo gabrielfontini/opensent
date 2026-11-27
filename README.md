@@ -10,6 +10,7 @@ OpenSENT puts the whole workflow on one WeAct STM32H750 core board and a USB cab
 |---|---|
 | **Sensor emulator** | Generates bit-exact SENT frames on a pin: tick 0.5–100 µs, 1–8 data nibbles, all three CRC variants, pause pulses (fixed / constant frame length), short and enhanced serial messages, waveforms (sine, triangle, ramp, square, counter) to simulate a moving throttle, and **fault injection** (CRC, sync, nibble range, missing / extra nibble, calibration drift, serial CRC). |
 | **Analyzer** | 2 independent input-capture receivers at 5 ns resolution, plus a monitor of the TX pin. Decodes fast channels, short / enhanced serial messages, and learns nibble count and CRC variant. Checks successive-calibration drift (1/64 rule), reports tick deviation and nibble timing margin, and keeps error statistics per type. |
+| **SENT → CAN gateway** | Sends the decoded values on CAN (FDCAN, 11-bit ID, configurable rate and bitrate) with a valid flag, error count, counter and data age, so an ECU or logger with a CAN input can use a SENT sensor. |
 | **Raw capture** | Two-edge capture of a SENT line, exported as VCD/CSV for PulseView. |
 | **PulseView decoder** | A SENT protocol decoder for sigrok / PulseView (libsigrokdecode does not ship one). |
 | **SENT → analog bridge** | Maps a decoded fast channel to a DAC voltage (0–3.3 V, scalable to 0–5 V), with a fail-safe voltage on sensor loss. It lets an aftermarket ECU read a SENT-only sensor. The output is measured back on chip. |
@@ -33,10 +34,12 @@ OpenSENT self test on /dev/ttyACM0 (WeAct-H750), channels RX2
   PASS  RX2 fault CAL detected             cal=16 (expected 16) other_errs=0
   PASS  bridge FC1=2048 -> 1.750 V         commanded=1.7503 measured=1.7507 state=OK
   PASS  bridge fail-safe on sensor loss    commanded=0.2500 measured=0.2491 state=FAIL
+  PASS  CAN gateway frames (loopback)      id=0x5A0 len=8 data=04D20C8A8000F001, 200 frames/s, drops=0
+  PASS  CAN gateway flags sensor loss      id=0x5A0 len=8 data=0000000000000F97
   PASS  RX2 capture -> PC decode           edges=4000 frames=221 ok=221 gaps=0 low=5.00 ticks
   PASS  RX0 capture path (pull bit-bang)   frames=299 ok=299 in-order=True tick=4998.8ns
   PASS  RX1 capture path (pull bit-bang)   frames=299 ok=299 in-order=True tick=4998.8ns
-PASS: 40/40 checks passed
+PASS: 42/42 checks passed
 ```
 
 How it works without wires:
@@ -44,6 +47,7 @@ How it works without wires:
 - **RX2** decodes the real TX pin level through EXTI.
 - **RX0 / RX1** (the input-capture receivers for real sensors) are exercised by bit-banging SENT frames on their own unconnected pins through the internal pull-up / pull-down resistors.
 - **The bridge** output is read back by ADC2, which is internally connected to the DAC.
+- **The CAN gateway** runs through the FDCAN internal loopback.
 
 The decoder is also validated on **real sensor captures** published by the rusEFI project (`tools/fetch_captures.sh`):
 
@@ -68,6 +72,7 @@ A **WeAct Studio STM32H750VBT6 core board**: 400 MHz Cortex-M7, USB-C, ST-Link (
 | SENT RX1 | **PA1** | TIM5_CH2 input capture + DMA |
 | RX2 (monitor) | PB10 | EXTI10 timestamped with TIM5 |
 | Bridge out 1 / 2 | **PA4 / PA5** | DAC1 OUT1/OUT2, read back by ADC2 |
+| CAN RX / TX | **PD0 / PD1** | FDCAN1 (with an external transceiver) |
 | USB | PA11/PA12 | OTG FS, CDC (`OpenSENT`) |
 | LED | PE3 | |
 
@@ -100,6 +105,12 @@ Read a real sensor on PA0, bridge throttle position to 0.5–3.0 V, and fall bac
 opensent bridge 1 --ch 0 --sig FC1 --in 0 4095 --out 0.5 3.0 --fail 0.25 100
 ```
 
+Put a SENT sensor on CAN (500 kbit/s, ID 0x5A0, every 10 ms):
+
+```bash
+opensent can --map 0 0x5A0 --period 10 --bitrate 500000
+```
+
 Decode a logic-analyzer export (Saleae CSV or VCD) with no hardware:
 
 ```bash
@@ -127,7 +138,7 @@ flowchart LR
   end
   subgraph fw["firmware/"]
     APP[app: protocol, channels, bridge, capture]
-    H7[h750: TIM2+DMA TX, TIM5+DMA RX, EXTI, DAC/ADC, USB]
+    H7[h750: TIM2+DMA TX, TIM5+DMA RX, EXTI, DAC/ADC, FDCAN, USB]
     SIM[sim: Linux pty, virtual loopback]
   end
   subgraph host["PC"]
@@ -182,7 +193,7 @@ See [docs/sent-notes.md](docs/sent-notes.md). Some highlights:
 
 ## Roadmap
 
-- SENT → CAN bridge (FDCAN on the H750) and SPC (master-triggered short PWM code)
+- SPC (master-triggered short PWM code) and ready-made CAN payloads for popular aftermarket ECUs
 - PSI5 receiver and emulator on the same board
 - KiCad front-end: 5 V SENT interface plus a 0–5 V bridge output stage
 

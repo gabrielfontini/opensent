@@ -21,6 +21,7 @@ Flashing:
 | RX0 | PA0 | input capture, internal pull-up, 40 ns digital filter |
 | RX1 | PA1 | same |
 | DAC1 / DAC2 | PA4 / PA5 | 0–3.3 V, buffered; also read back internally by ADC2 |
+| CAN RX / TX | PD0 / PD1 | FDCAN1 to a 3.3 V CAN transceiver (SN65HVD230, TJA1051T/3, ...) |
 | GND | | common with the ECU / sensor ground |
 
 Nothing needs to be connected for the self test.
@@ -80,5 +81,6 @@ Then map in volts at the DAC, for example `BRIDGE1:MAP RX0,FC1,193,3896,0.333,3.
 | EXTI10 | monitor of the TX pin, timestamped from TIM5 at priority 0 |
 | DAC1 | bridge outputs, mode "pin + on-chip peripherals" |
 | ADC2 | DAC read-back through internal channels 16 and 17, 16 bit, linearity calibrated |
+| FDCAN1 | SENT → CAN gateway; message RAM: RX FIFO0 8 elements, TX FIFO 4 elements |
 | DWT | cycle-accurate bit-bang for `RXn:PULLTEST` |
 | RAM | `.data` / `.bss` / DMA buffers in AXI SRAM (D-cache off); stack in DTCM |

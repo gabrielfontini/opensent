@@ -6,6 +6,7 @@
   opensent monitor --ch 0               live decoded frames
   opensent stat --ch 0                  receiver statistics
   opensent bridge 1 --ch 0 --sig FC1 --in 0 4095 --out 0.5 4.5 --fail 0 100
+  opensent can --map 0 0x5A0 --period 10    SENT -> CAN gateway
   opensent selftest [--jumper]          end-to-end hardware verification
   opensent decode capture.csv|.vcd      offline decoder (no hardware)
   opensent synth out.vcd --fc1 ...      synthesize a SENT waveform file
@@ -153,6 +154,30 @@ def cmd_bridge(args) -> int:
             d.cmd("BRIDGE%d:FAIL %g,%d" % (args.dac, args.fail[0], int(args.fail[1])))
         d.cmd("BRIDGE%d:STATE %s" % (args.dac, "OFF" if args.disable else "ON"))
         print(d.query("BRIDGE%d:MAP?" % args.dac), d.query("BRIDGE%d:OUT?" % args.dac))
+    return 0
+
+
+def decode_can_payload(data: bytes) -> dict:
+    """OpenSENT SENT->CAN payload (8 bytes, big endian)."""
+    return {"fc1": data[0] << 8 | data[1], "fc2": data[2] << 8 | data[3], "status": data[4] & 0xF,
+            "valid": bool(data[4] & 0x80), "errors": data[5], "counter": data[6], "age_ms": data[7]}
+
+
+def cmd_can(args) -> int:
+    with _dev(args) as d:
+        d.cmd("CAN:MODE %s" % ("LOOPBACK" if args.loopback else "NORMAL"))
+        d.cmd("CAN:BITRATE %d" % args.bitrate)
+        if args.map:
+            ch, ident = args.map
+            d.cmd("RX%d:STATE ON" % int(ch))
+            d.cmd("CAN:MAP RX%d,%d,%d" % (int(ch), int(ident, 0), args.period))
+        d.cmd("CAN:STATE %s" % ("OFF" if args.off else "ON"))
+        print(d.query("CAN:MAP?"))
+        print(d.query("CAN:STAT?"))
+        rx = d.query("CAN:RX?")
+        print(rx)
+        if "data=" in rx and len(rx.split("data=")[1]) == 16:
+            print(decode_can_payload(bytes.fromhex(rx.split("data=")[1])))
     return 0
 
 
@@ -354,6 +379,14 @@ def main(argv=None) -> int:
     p.add_argument("--fail", type=float, nargs=2, metavar=("VOLTS", "TIMEOUT_MS"))
     p.add_argument("--disable", action="store_true")
     p.set_defaults(fn=cmd_bridge)
+
+    p = sub.add_parser("can", help="SENT -> CAN gateway (FDCAN1, PD0 RX / PD1 TX)")
+    p.add_argument("--map", nargs=2, metavar=("RXCH", "ID"), help="e.g. --map 0 0x5A0")
+    p.add_argument("--period", type=int, default=10, help="ms between messages")
+    p.add_argument("--bitrate", type=int, default=500000)
+    p.add_argument("--loopback", action="store_true", help="internal loopback (no transceiver)")
+    p.add_argument("--off", action="store_true")
+    p.set_defaults(fn=cmd_can)
 
     p = sub.add_parser("selftest", help="end-to-end verification on the hardware (or simulator)")
     p.add_argument("--jumper", action="store_true", help="TX (PB10) is wired to RX0 (PA0): test RX0 too")

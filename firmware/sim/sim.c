@@ -165,6 +165,25 @@ bool hw_rx_pulltest(unsigned ch, sent_tx_t *gen, unsigned frames)
     return true;
 }
 
+static struct { uint32_t id; uint8_t d[8], len; } canq[64];
+static unsigned can_h, can_t;
+static bool can_on;
+bool hw_can_start(uint32_t br, bool lb) { (void)br; (void)lb; can_on = true; can_h = can_t = 0; return true; }
+void hw_can_stop(void) { can_on = false; }
+bool hw_can_send(uint32_t id, const uint8_t *d, uint8_t len)
+{
+    if (!can_on || (can_h + 1) % 64 == can_t) return false;
+    canq[can_h].id = id; memcpy(canq[can_h].d, d, len); canq[can_h].len = len; can_h = (can_h + 1) % 64;
+    return true;
+}
+bool hw_can_recv(uint32_t *id, uint8_t *d, uint8_t *len)
+{
+    if (can_t == can_h) return false;
+    *id = canq[can_t].id; memcpy(d, canq[can_t].d, 8); *len = canq[can_t].len; can_t = (can_t + 1) % 64;
+    return true;
+}
+void hw_can_status(uint32_t *tec, uint32_t *rec, uint32_t *psr) { *tec = *rec = 0; *psr = 7; }
+
 unsigned hw_rx_read(unsigned ch, uint32_t *ts, unsigned max, uint32_t *overruns)
 {
     if (ch == 0) {

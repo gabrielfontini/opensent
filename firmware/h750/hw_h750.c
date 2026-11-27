@@ -414,8 +414,10 @@ bool hw_rx_both_edges(unsigned ch, bool both, bool invert)
         }
         /* arm atomically: capture off, ring flushed, level read, capture on;
          * retry if an edge slipped in between */
+        uint32_t f = ch == 0 ? (TIM_SR_CC1IF | TIM_SR_CC1OF) : (TIM_SR_CC2IF | TIM_SR_CC2OF);
         do {
             TIM5->CCER &= ~(e | p | np);
+            TIM5->SR = ~f; /* drop a capture (and its DMA request) from before */
             rx_dma_start(ch);
             l1 = pin_level(ch);
             TIM5->CCER |= p | np | e;
@@ -438,6 +440,9 @@ bool hw_rx_both_edges(unsigned ch, bool both, bool invert)
     }
     do {
         EXTI_D1->IMR1 &= ~(1u << 10);
+        EXTI_D1->PR1 = 1u << 10;
+        NVIC_ClearPendingIRQ(EXTI15_10_IRQn); /* an edge from before must not be the first */
+        __DSB();
         mon_head = mon_tail = 0;
         l1 = pin_level(ch);
         EXTI->FTSR1 |= 1u << 10;
@@ -562,6 +567,110 @@ bool hw_rx_pulltest(unsigned ch, sent_tx_t *gen, unsigned frames)
     }
     GPIOA->PUPDR = (GPIOA->PUPDR & ~mask) | up;
     return true;
+}
+
+/* ------------------------------------------------------------ FDCAN1
+ * Classic CAN 2.0 on PD0 (RX) / PD1 (TX), AF9, kernel clock HSE 25 MHz,
+ * 25 time quanta per bit, sample point 80 %. Message RAM: RX FIFO0 of
+ * 8 elements at word 0, TX FIFO of 4 elements at word 32 (8-byte data). */
+#define CAN_RAM ((volatile uint32_t *)SRAMCAN_BASE)
+#define CAN_RXF0_WORD 0u
+#define CAN_TXQ_WORD  32u
+static bool s_can_on;
+
+void hw_can_stop(void)
+{
+    if (!(RCC->APB1HENR & RCC_APB1HENR_FDCANEN)) {
+        return;
+    }
+    FDCAN1->CCCR |= FDCAN_CCCR_INIT;
+    s_can_on = false;
+}
+
+bool hw_can_start(uint32_t bitrate, bool loopback)
+{
+    uint32_t presc = 25000000u / (25u * bitrate);
+    if (presc < 1u || presc * 25u * bitrate != 25000000u) {
+        return false; /* 1M, 500k, 250k, 125k, 100k, 50k ... */
+    }
+    RCC->D2CCIP1R = (RCC->D2CCIP1R & ~RCC_D2CCIP1R_FDCANSEL) | (0u << RCC_D2CCIP1R_FDCANSEL_Pos); /* HSE */
+    RCC->APB1HENR |= RCC_APB1HENR_FDCANEN;
+    RCC->AHB4ENR |= RCC_AHB4ENR_GPIODEN;
+    (void)RCC->APB1HENR;
+    gpio_mode(GPIOD, 0, 2, 9);
+    gpio_mode(GPIOD, 1, 2, 9);
+
+    FDCAN1->CCCR |= FDCAN_CCCR_INIT;
+    for (uint32_t i = 0; !(FDCAN1->CCCR & FDCAN_CCCR_INIT) && i < 1000000u; i++) {
+    }
+    FDCAN1->CCCR |= FDCAN_CCCR_CCE;
+    FDCAN1->CCCR &= ~(FDCAN_CCCR_TEST | FDCAN_CCCR_MON | FDCAN_CCCR_FDOE | FDCAN_CCCR_BRSE | FDCAN_CCCR_DAR);
+    FDCAN1->NBTP = ((4u - 1u) << FDCAN_NBTP_NSJW_Pos) | ((presc - 1u) << FDCAN_NBTP_NBRP_Pos) |
+                   ((19u - 1u) << FDCAN_NBTP_NTSEG1_Pos) | ((5u - 1u) << FDCAN_NBTP_NTSEG2_Pos);
+    FDCAN1->GFC = 0;   /* accept everything into FIFO0 */
+    FDCAN1->SIDFC = 0;
+    FDCAN1->XIDFC = 0;
+    FDCAN1->RXESC = 0; /* 8-byte elements */
+    FDCAN1->TXESC = 0;
+    FDCAN1->RXF0C = (CAN_RXF0_WORD << FDCAN_RXF0C_F0SA_Pos) | (8u << FDCAN_RXF0C_F0S_Pos);
+    FDCAN1->TXBC = (CAN_TXQ_WORD << FDCAN_TXBC_TBSA_Pos) | (4u << FDCAN_TXBC_TFQS_Pos);
+    for (unsigned i = 0; i < CAN_TXQ_WORD + 16u; i++) {
+        CAN_RAM[i] = 0;
+    }
+    if (loopback) {
+        /* internal loopback: frames are received by our own FIFO0, nothing
+         * reaches the pins' bus side (no transceiver needed) */
+        FDCAN1->CCCR |= FDCAN_CCCR_TEST | FDCAN_CCCR_MON;
+        FDCAN1->TEST |= FDCAN_TEST_LBCK;
+    }
+    FDCAN1->CCCR &= ~FDCAN_CCCR_INIT;
+    for (uint32_t i = 0; (FDCAN1->CCCR & FDCAN_CCCR_INIT) && i < 1000000u; i++) {
+    }
+    s_can_on = !(FDCAN1->CCCR & FDCAN_CCCR_INIT);
+    return s_can_on;
+}
+
+bool hw_can_send(uint32_t id, const uint8_t *d, uint8_t len)
+{
+    if (!s_can_on || (FDCAN1->TXFQS & FDCAN_TXFQS_TFQF)) {
+        return false;
+    }
+    uint32_t idx = (FDCAN1->TXFQS & FDCAN_TXFQS_TFQPI_Msk) >> FDCAN_TXFQS_TFQPI_Pos;
+    volatile uint32_t *e = &CAN_RAM[CAN_TXQ_WORD + idx * 4u];
+    uint32_t w[2] = {0, 0};
+    memcpy(w, d, len > 8 ? 8 : len);
+    e[0] = (id & 0x7FFu) << 18;
+    e[1] = (uint32_t)(len > 8 ? 8 : len) << 16;
+    e[2] = w[0];
+    e[3] = w[1];
+    FDCAN1->TXBAR = 1u << idx;
+    return true;
+}
+
+bool hw_can_recv(uint32_t *id, uint8_t *d, uint8_t *len)
+{
+    if (!s_can_on || !(FDCAN1->RXF0S & FDCAN_RXF0S_F0FL)) {
+        return false;
+    }
+    uint32_t idx = (FDCAN1->RXF0S & FDCAN_RXF0S_F0GI_Msk) >> FDCAN_RXF0S_F0GI_Pos;
+    volatile uint32_t *e = &CAN_RAM[CAN_RXF0_WORD + idx * 4u];
+    uint32_t r0 = e[0], r1 = e[1], w[2] = {e[2], e[3]};
+    *id  = (r0 & (1u << 30)) ? (r0 & 0x1FFFFFFFu) : ((r0 >> 18) & 0x7FFu);
+    *len = (uint8_t)((r1 >> 16) & 0xFu);
+    if (*len > 8) {
+        *len = 8;
+    }
+    memcpy(d, w, *len);
+    FDCAN1->RXF0A = idx;
+    return true;
+}
+
+void hw_can_status(uint32_t *tec, uint32_t *rec, uint32_t *psr)
+{
+    uint32_t ecr = s_can_on ? FDCAN1->ECR : 0u;
+    *tec = (ecr & FDCAN_ECR_TEC_Msk) >> FDCAN_ECR_TEC_Pos;
+    *rec = (ecr & FDCAN_ECR_REC_Msk) >> FDCAN_ECR_REC_Pos;
+    *psr = s_can_on ? FDCAN1->PSR : 0u;
 }
 
 /* ------------------------------------------------------------ boot */
