@@ -475,6 +475,59 @@ unsigned hw_rx_read(unsigned ch, uint32_t *ts, unsigned max, uint32_t *overruns)
     return n;
 }
 
+/* Wire-free test of the real RX input path: with nothing connected to the
+ * RX pin, toggling its internal pull-up / pull-down (~40 kOhm) moves the
+ * pin and the timer captures the edges exactly like an external sensor.
+ * The pulses are timed with the cycle counter, interrupts off per frame;
+ * the gap between frames is seen as a (long) pause pulse. */
+bool hw_rx_pulltest(unsigned ch, sent_tx_t *gen, unsigned frames)
+{
+    if (ch > 1) {
+        return false;
+    }
+    CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+    DWT->LAR = 0xC5ACCE55u;
+    DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
+    const uint32_t shift = 2u * ch;
+    const uint32_t up = 1u << shift, down = 2u << shift, mask = 3u << shift;
+    const double cyc_per_tick = (double)gen->cfg.tick_ns * 1e-9 * (double)SystemCoreClock;
+    const uint32_t low = (uint32_t)(5.0 * cyc_per_tick);
+    uint16_t ticks[SENT_MAX_DATA + 5];
+    for (unsigned f = 0; f < frames; f++) {
+        unsigned k = sent_tx_build_frame(gen, ticks);
+        if (k > 0 && ticks[k - 1] >= SENT_PAUSE_MIN && k > 3 && gen->cfg.pause_mode != SENT_PAUSE_OFF) {
+            k--; /* the inter-frame gap is the pause */
+        }
+        __disable_irq();
+        uint32_t t = DWT->CYCCNT + 200u;
+        while ((int32_t)(DWT->CYCCNT - t) < 0) {
+        }
+        double acc = 0.0;
+        for (unsigned i = 0; i <= k; i++) {
+            uint32_t start = t + (uint32_t)acc;
+            while ((int32_t)(DWT->CYCCNT - start) < 0) {
+            }
+            GPIOA->PUPDR = (GPIOA->PUPDR & ~mask) | down; /* falling edge */
+            if (i == k) {
+                break; /* edge that ends the CRC nibble */
+            }
+            while ((int32_t)(DWT->CYCCNT - (start + low)) < 0) {
+            }
+            GPIOA->PUPDR = (GPIOA->PUPDR & ~mask) | up;
+            acc += (double)ticks[i] * cyc_per_tick;
+        }
+        uint32_t end = DWT->CYCCNT + low;
+        while ((int32_t)(DWT->CYCCNT - end) < 0) {
+        }
+        GPIOA->PUPDR = (GPIOA->PUPDR & ~mask) | up;
+        __enable_irq();
+        for (volatile uint32_t d = 0; d < 20000u; d++) { /* ~ 100 us gap: pause */
+        }
+    }
+    GPIOA->PUPDR = (GPIOA->PUPDR & ~mask) | up;
+    return true;
+}
+
 /* ------------------------------------------------------------ boot */
 
 void hw_bootloader(void)

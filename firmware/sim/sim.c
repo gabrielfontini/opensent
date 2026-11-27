@@ -148,6 +148,23 @@ static void sim_advance(void)
     }
 }
 
+bool hw_rx_pulltest(unsigned ch, sent_tx_t *gen, unsigned frames)
+{
+    uint16_t ticks[SENT_MAX_DATA + 5];
+    uint64_t t = virt_clk();
+    double clk_per_tick = gen->cfg.tick_ns * 1e-9 * CLK;
+    for (unsigned f = 0; f < frames; f++) {
+        unsigned k = sent_tx_build_frame(gen, ticks);
+        for (unsigned i = 0; i < k; i++) {
+            push(ch, (uint32_t)t);
+            t += (uint64_t)(ticks[i] * clk_per_tick);
+        }
+        push(ch, (uint32_t)t);
+        t += CLK / 10000; /* 100 us gap */
+    }
+    return true;
+}
+
 unsigned hw_rx_read(unsigned ch, uint32_t *ts, unsigned max, uint32_t *overruns)
 {
     if (ch == 0) {

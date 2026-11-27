@@ -278,6 +278,8 @@ static void fmt_frame(unsigned ch, const sent_frame_t *f)
 
 /* --------------------------------------------------------- commands */
 
+static void process_channel(unsigned ch);
+
 typedef struct {
     char *hdr;      /* upper-cased header without '?' */
     bool  query;
@@ -751,6 +753,27 @@ static err_t cmd_rx(cmd_t *c, const char *sub)
         CAP.level0 = l1;
         CAP.active = true;
         return E_OK;
+    } else if (ieq(sub, "PULLTEST")) {
+        /* wire-free receiver test: frames with FC1 counting from 0, FC2 = 0x5A5 */
+        if (!parse_uint(c->arg, &u)) return E_DATA;
+        if (u < 1 || u > 2000) return E_RANGE;
+        if (!x->en || ch > 1) return E_STATE;
+        static sent_tx_t gen;
+        sent_tx_cfg_t gc;
+        sent_tx_cfg_default(&gc);
+        gc.tick_ns = 5000.0f;
+        gc.fc[0].kind = SENT_WAVE_COUNT_UP;
+        gc.fc[0].min = 0;
+        gc.fc[0].max = 4095;
+        gc.fc[1].value = 0x5A5;
+        sent_tx_init(&gen, hw_tx_clk(), &gc);
+        for (uint32_t done = 0; done < u;) {
+            uint32_t n = u - done > 20u ? 20u : u - done;
+            if (!hw_rx_pulltest(ch, &gen, n)) return E_STATE;
+            done += n;
+            process_channel(ch); /* keep the capture ring drained */
+        }
+        return E_OK;
     } else if (ieq(sub, "CAP:DATA") && c->query) {
         char *av[3];
         uint32_t off, cnt;
@@ -947,7 +970,7 @@ static err_t execute(char *s)
              "TX:STATE[?],TX:TICK[?],TX:LOW[?],TX:NIB[?],TX:CRC[?],TX:FMT[?],TX:STATUS[?],TX:FC1[?],TX:FC2[?],"
              "TX:WAVE[?],TX:RAW[?],TX:PAUSE[?],TX:SLOW[?],TX:SLOW:ADD,TX:SLOW:CLR,TX:FAULT[?],TX:DRIVE[?],TX:INFO?,"
              "RXn:STATE[?],RXn:POL[?],RXn:TICK[?],RXn:NIB[?],RXn:CRC[?],RXn:FMT[?],RXn:PAUSE[?],RXn:CLR,"
-             "RXn:LAST?,RXn:VAL?,RXn:STAT?,RXn:SLOW?,RXn:RAW?,RXn:CAP[?],RXn:CAP:DATA?,"
+             "RXn:LAST?,RXn:VAL?,RXn:STAT?,RXn:SLOW?,RXn:RAW?,RXn:CAP[?],RXn:CAP:DATA?,RXn:PULLTEST,"
              "BRIDGEn:STATE[?],BRIDGEn:MAP[?],BRIDGEn:FAIL[?],BRIDGEn:OUT?,DACn[?],DACn:MEAS?");
         return E_OK;
     }

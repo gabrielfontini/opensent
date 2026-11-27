@@ -247,12 +247,35 @@ class SelfTest:
                         "edges=%d frames=%d ok=%d gaps=%d low=%.2f ticks" % (len(times), len(frames), len(good),
                                                                           gaps, low_ticks))
 
+    def test_pulltest(self) -> None:
+        """Real RX0/RX1 input path without wires: internal pull-up/down bit-bang."""
+        self.dev.reset()
+        for ch in (0, 1):
+            self.dev.cmd("RX%d:STATE ON" % ch)
+            self.dev.cmd("RX%d:NIB 6" % ch)
+            got = []
+            self.dev.on_frame = got.append
+            try:
+                self.dev.cmd("STREAM %d,1" % (1 << ch))
+                self.dev.query("RX%d:PULLTEST 300" % ch)
+                time.sleep(0.2)
+                self.dev.query("STREAM 0")
+            finally:
+                self.dev.on_frame = None
+            st = self.dev.rx_stat(ch)
+            good = [f for f in got if f.ok]
+            seq_ok = all(f.fc1 == i + (good[0].fc1 if good else 0) for i, f in enumerate(good))
+            ok = len(good) >= 298 and seq_ok and all(f.fc2 == 0x5A5 for f in good) and \
+                abs(st["tick_ns"] / 5000.0 - 1) < 0.002 and st["frames"] == st["ok"]
+            self._check("RX%d capture path (pull bit-bang)" % ch, ok,
+                        "frames=%d ok=%d in-order=%s tick=%.1fns" % (st["frames"], st["ok"], seq_ok, st["tick_ns"]))
+
     def run(self) -> Report:
         idn = self.dev.idn()
         self.log("OpenSENT self test on %s (%s), channels %s" % (self.dev.port, idn.split(",")[1],
                                                                 ",".join("RX%d" % c for c in self.chans)))
         for t in (self.test_counter, self.test_ticks, self.test_clock_error, self.test_crc_modes,
-                  self.test_formats, self.test_pauses, self.test_slow, self.test_faults, self.test_rx_tick_config, self.test_bridge, self.test_capture):
+                  self.test_formats, self.test_pauses, self.test_slow, self.test_faults, self.test_rx_tick_config, self.test_bridge, self.test_capture, self.test_pulltest):
             self.log("%s: %s" % (t.__name__[5:], (t.__doc__ or "").strip().splitlines()[0] if t.__doc__ else ""))
             t()
         self.dev.reset()
