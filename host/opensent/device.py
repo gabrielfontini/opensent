@@ -154,6 +154,32 @@ class Device:
     def tx_info(self) -> Dict[str, object]:
         return parse_kv(self.query("TX:INFO?"))
 
+    def capture(self, ch: int, edges: int, timeout: float = 10.0):
+        """Raw two-edge capture. Returns (level_before_first_edge, clk_hz,
+        [edge times in seconds, first edge at 0])."""
+        self.cmd("RX%d:STATE ON" % ch)
+        self.cmd("RX%d:CAP %d" % (ch, edges))
+        end = time.monotonic() + timeout
+        while True:
+            st = parse_kv(self.query("RX%d:CAP?" % ch))
+            if st["state"] == "DONE":
+                break
+            if time.monotonic() > end:
+                raise DeviceError("capture timeout (%s edges of %s)" % (st["n"], edges))
+            time.sleep(0.02)
+        clk = float(st["clk"])
+        d: List[int] = []
+        while len(d) < int(st["n"]):
+            r = self.query("RX%d:CAP:DATA? %d,100" % (ch, len(d)))
+            if r == "END":
+                break
+            d += [int(x) for x in r.split(",")]
+        t, times = 0, [0.0]
+        for x in d:
+            t += x
+            times.append(t / clk)
+        return bool(st["level0"]), clk, times
+
     def stream(self, mask: int, seconds: float, every: int = 1) -> List[StreamFrame]:
         """Collect streamed frames for a while."""
         got: List[StreamFrame] = []

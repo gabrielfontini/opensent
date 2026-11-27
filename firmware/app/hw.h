@@ -37,6 +37,9 @@ void     hw_tx_drive(bool open_drain);
 uint32_t hw_rx_clk(void);
 void     hw_rx_enable(unsigned ch, bool en, bool invert);
 unsigned hw_rx_read(unsigned ch, uint32_t *ts, unsigned max, uint32_t *overruns);
+/* raw capture: timestamp both edges (they alternate), read the pin level */
+void     hw_rx_both_edges(unsigned ch, bool both, bool invert);
+bool     hw_rx_pin(unsigned ch);
 
 /* analog outputs (bridge) */
 float hw_dac_max(void);

@@ -10,6 +10,7 @@
   opensent decode capture.csv|.vcd      offline decoder (no hardware)
   opensent synth out.vcd --fc1 ...      synthesize a SENT waveform file
   opensent convert in.csv out.vcd       CSV edge list -> VCD (PulseView)
+  opensent capture --ch 0 -o x.vcd      raw two-edge capture on the instrument
   opensent sim                          start the host simulator (pty)
 
 SPDX-License-Identifier: MIT
@@ -234,6 +235,35 @@ def cmd_synth(args) -> int:
     return 0
 
 
+def cmd_capture(args) -> int:
+    with _dev(args) as d:
+        level0, clk, times = d.capture(args.ch, args.edges)
+    levels = [(0.0, int(level0))]
+    lv = int(level0)
+    for t in times:
+        lv ^= 1
+        levels.append((t + 1e-6, lv))
+    if args.out:
+        if args.out.lower().endswith(".vcd"):
+            codec.write_vcd(args.out, levels, timescale_ns=max(1, int(round(1e9 / clk))))
+        else:
+            with open(args.out, "w") as fp:
+                fp.write("Time[s], Channel 0\n")
+                for t, v in levels:
+                    fp.write("%.9f, %d\n" % (t, v))
+        print("wrote %d edges (%.3f ms) to %s" % (len(times), times[-1] * 1e3, args.out))
+    fall = [t for t, v in levels[1:] if v == 0]
+    rise = [t for t, v in levels[1:] if v == 1]
+    lows = [r - f for f, r in zip(fall, [x for x in rise if x > fall[0]])] if fall and rise else []
+    dec = codec.Decoder(clk_hz=1.0)
+    frames = list(dec.decode_edges(fall))
+    ok = sum(f.ok for f in frames)
+    tick = next((f.tick_ns for f in reversed(frames) if f.ok), 0.0)
+    print("decoded %d frames, %d ok, tick %.1f ns, low time %.2f..%.2f us" % (
+        len(frames), ok, tick, min(lows) * 1e6 if lows else 0, max(lows) * 1e6 if lows else 0))
+    return 0
+
+
 def cmd_convert(args) -> int:
     """CSV (time,level) edge list -> VCD, e.g. to open captures in PulseView"""
     levels = []
@@ -358,6 +388,12 @@ def main(argv=None) -> int:
     p.add_argument("--msg", action="append")
     p.add_argument("--timescale", type=int, default=10, help="VCD timescale in ns")
     p.set_defaults(fn=cmd_synth)
+
+    p = sub.add_parser("capture", help="raw two-edge capture from the instrument -> VCD/CSV (PulseView)")
+    p.add_argument("--ch", type=int, default=0)
+    p.add_argument("--edges", type=int, default=4000)
+    p.add_argument("-o", "--out")
+    p.set_defaults(fn=cmd_capture)
 
     p = sub.add_parser("convert", help="convert a CSV edge list to VCD (for PulseView)")
     p.add_argument("inp")

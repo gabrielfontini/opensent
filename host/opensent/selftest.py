@@ -228,12 +228,31 @@ class SelfTest:
         self._check("bridge fail-safe on sensor loss", state == "FAIL" and abs(float(cmd_v) - 0.25) < 0.002
                     and (m < 0 or abs(m - 0.25) < 0.02), "commanded=%s measured=%s state=%s" % (cmd_v, meas, state))
 
+    def test_capture(self) -> None:
+        """Raw two-edge capture of the pin, decoded on the PC."""
+        from . import codec
+        self._setup("TX:WAVE 1,COUNT,0,4095", "TX:SLOW ENH12", "TX:SLOW:ADD 0x23,786")
+        time.sleep(0.1)
+        for ch in self.chans:
+            level0, clk, times = self.dev.capture(ch, 4000)
+            fall = times[0::2] if level0 else times[1::2]
+            rise = times[1::2] if level0 else times[0::2]
+            lows = [r - f for f, r in zip(fall, rise)]
+            frames = list(codec.Decoder(clk_hz=1.0, nibbles=6).decode_edges(fall))
+            good = [f for f in frames if f.ok]
+            gaps = sum(1 for a, b in zip(good, good[1:]) if (a.fc1 + 1) % 4096 != b.fc1)
+            low_ticks = sorted(lows)[len(lows) // 2] / 3e-6 if lows else 0
+            self._check("RX%d capture -> PC decode" % ch, len(good) >= len(frames) - 1 and len(good) > 150
+                        and gaps == 0 and abs(low_ticks - 5) < 0.2,
+                        "edges=%d frames=%d ok=%d gaps=%d low=%.2f ticks" % (len(times), len(frames), len(good),
+                                                                          gaps, low_ticks))
+
     def run(self) -> Report:
         idn = self.dev.idn()
         self.log("OpenSENT self test on %s (%s), channels %s" % (self.dev.port, idn.split(",")[1],
                                                                 ",".join("RX%d" % c for c in self.chans)))
         for t in (self.test_counter, self.test_ticks, self.test_clock_error, self.test_crc_modes,
-                  self.test_formats, self.test_pauses, self.test_slow, self.test_faults, self.test_rx_tick_config, self.test_bridge):
+                  self.test_formats, self.test_pauses, self.test_slow, self.test_faults, self.test_rx_tick_config, self.test_bridge, self.test_capture):
             self.log("%s: %s" % (t.__name__[5:], (t.__doc__ or "").strip().splitlines()[0] if t.__doc__ else ""))
             t()
         self.dev.reset()

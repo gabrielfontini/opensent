@@ -49,6 +49,17 @@ typedef struct {
     bool     failed;
 } bridge_t;
 
+#define CAP_MAX 8192u
+
+static struct {
+    bool     active, done;
+    uint8_t  ch;
+    bool     level0;    /* line level before the first captured edge */
+    uint32_t n, target;
+    uint32_t first, last;
+    uint32_t d[CAP_MAX]; /* intervals between consecutive edges (clocks) */
+} CAP;
+
 static struct {
     sent_tx_t     tx;
     sent_tx_cfg_t txc;  /* staged config; copied into tx under lock */
@@ -706,6 +717,54 @@ static err_t cmd_rx(cmd_t *c, const char *sub)
         if (ieq(c->arg, "NONE")) k->no_pause = true;
         else if (ieq(c->arg, "AUTO")) k->no_pause = false;
         else return E_ILLEGAL;
+    } else if (ieq(sub, "CAP")) {
+        if (c->query) {
+            outf("state=%s ch=%u n=%lu target=%lu level0=%d clk=%lu", CAP.active ? "RUN" : (CAP.done ? "DONE" : "IDLE"),
+                 CAP.ch, (unsigned long)CAP.n, (unsigned long)CAP.target, CAP.level0,
+                 (unsigned long)hw_rx_clk());
+            return E_OK;
+        }
+        if (!parse_uint(c->arg, &u)) return E_DATA;
+        if (u < 2 || u > CAP_MAX) return E_RANGE;
+        if (!x->en) return E_STATE;
+        if (CAP.active) {
+            hw_rx_both_edges(CAP.ch, false, S.ch[CAP.ch].inv);
+        }
+        memset(&CAP, 0, sizeof CAP - sizeof CAP.d);
+        CAP.ch = (uint8_t)ch;
+        CAP.target = u;
+        /* drain pending timestamps, then switch to both edges */
+        uint32_t tmp[64], ovr;
+        while (hw_rx_read(ch, tmp, 64, &ovr)) {
+        }
+        bool l1, l2;
+        do {
+            l1 = hw_rx_pin(ch);
+            hw_rx_both_edges(ch, true, x->inv);
+            l2 = hw_rx_pin(ch);
+            if (l1 != l2) {
+                hw_rx_both_edges(ch, false, x->inv);
+                while (hw_rx_read(ch, tmp, 64, &ovr)) {
+                }
+            }
+        } while (l1 != l2);
+        CAP.level0 = l1;
+        CAP.active = true;
+        return E_OK;
+    } else if (ieq(sub, "CAP:DATA") && c->query) {
+        char *av[3];
+        uint32_t off, cnt;
+        if (split(c->arg, av, 3) != 2 || !parse_uint(av[0], &off) || !parse_uint(av[1], &cnt)) return E_MISSING;
+        if (cnt > 100 || off > CAP.n) return E_RANGE;
+        if (CAP.ch != ch) return E_STATE;
+        uint32_t end = off + cnt > CAP.n ? CAP.n : off + cnt;
+        if (end == off) {
+            outf("END");
+        }
+        for (uint32_t i = off; i < end; i++) {
+            outf("%s%lu", i > off ? "," : "", (unsigned long)CAP.d[i]);
+        }
+        return E_OK;
     } else if (ieq(sub, "CLR")) {
         /* reset statistics and learned state, keep configuration */
     } else if (ieq(sub, "LAST") && c->query) {
@@ -888,7 +947,7 @@ static err_t execute(char *s)
              "TX:STATE[?],TX:TICK[?],TX:LOW[?],TX:NIB[?],TX:CRC[?],TX:FMT[?],TX:STATUS[?],TX:FC1[?],TX:FC2[?],"
              "TX:WAVE[?],TX:RAW[?],TX:PAUSE[?],TX:SLOW[?],TX:SLOW:ADD,TX:SLOW:CLR,TX:FAULT[?],TX:DRIVE[?],TX:INFO?,"
              "RXn:STATE[?],RXn:POL[?],RXn:TICK[?],RXn:NIB[?],RXn:CRC[?],RXn:FMT[?],RXn:PAUSE[?],RXn:CLR,"
-             "RXn:LAST?,RXn:VAL?,RXn:STAT?,RXn:SLOW?,RXn:RAW?,"
+             "RXn:LAST?,RXn:VAL?,RXn:STAT?,RXn:SLOW?,RXn:RAW?,RXn:CAP[?],RXn:CAP:DATA?,"
              "BRIDGEn:STATE[?],BRIDGEn:MAP[?],BRIDGEn:FAIL[?],BRIDGEn:OUT?,DACn[?],DACn:MEAS?");
         return E_OK;
     }
@@ -1040,6 +1099,24 @@ static void process_channel(unsigned ch)
             break;
         }
         if (!x->en) {
+            continue;
+        }
+        if (CAP.active && CAP.ch == ch) {
+            for (unsigned i = 0; i < n && CAP.active; i++) {
+                if (CAP.n == 0 && !CAP.first) {
+                    CAP.first = ts[i] | 1u; /* nonzero marker */
+                    CAP.last  = ts[i];
+                    continue;
+                }
+                CAP.d[CAP.n++] = ts[i] - CAP.last;
+                CAP.last = ts[i];
+                if (CAP.n + 1u >= CAP.target || CAP.n >= CAP_MAX) {
+                    CAP.active = false;
+                    CAP.done = true;
+                    hw_rx_both_edges(ch, false, x->inv);
+                    x->have_prev = false;
+                }
+            }
             continue;
         }
         for (unsigned i = 0; i < n; i++) {

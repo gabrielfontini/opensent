@@ -399,6 +399,36 @@ void hw_rx_enable(unsigned ch, bool en, bool invert)
     }
 }
 
+void hw_rx_both_edges(unsigned ch, bool both, bool invert)
+{
+    if (ch < 2) {
+        uint32_t p = ch == 0 ? TIM_CCER_CC1P : TIM_CCER_CC2P;
+        uint32_t np = ch == 0 ? TIM_CCER_CC1NP : TIM_CCER_CC2NP;
+        TIM5->CCER &= ~(p | np);
+        TIM5->CCER |= both ? (p | np) : (invert ? 0u : p);
+    } else if (ch == 2) {
+        EXTI->FTSR1 &= ~(1u << 10);
+        EXTI->RTSR1 &= ~(1u << 10);
+        if (both || !invert) {
+            EXTI->FTSR1 |= 1u << 10;
+        }
+        if (both || invert) {
+            EXTI->RTSR1 |= 1u << 10;
+        }
+    }
+}
+
+bool hw_rx_pin(unsigned ch)
+{
+    if (ch == 0) {
+        return (GPIOA->IDR >> 0) & 1u;
+    }
+    if (ch == 1) {
+        return (GPIOA->IDR >> 1) & 1u;
+    }
+    return (GPIOB->IDR >> 10) & 1u;
+}
+
 unsigned hw_rx_read(unsigned ch, uint32_t *ts, unsigned max, uint32_t *overruns)
 {
     *overruns = 0;

@@ -37,6 +37,8 @@ static uint32_t ring[HW_RX_CHANNELS][RING];
 static unsigned head[HW_RX_CHANNELS], tail[HW_RX_CHANNELS];
 static uint32_t ovr[HW_RX_CHANNELS];
 static int      jumper = 1;
+static bool     both[HW_RX_CHANNELS];
+static bool     line_level = true;
 static float    dac[HW_DAC_CHANNELS];
 
 static uint64_t now_ns(void)
@@ -91,7 +93,9 @@ void hw_tx_start(sent_tx_t *t)
     }
 }
 
-void hw_tx_stop(void) { tx = NULL; }
+void hw_tx_stop(void) { tx = NULL; line_level = true; }
+void hw_rx_both_edges(unsigned ch, bool b, bool inv) { (void)inv; if (ch < HW_RX_CHANNELS) both[ch] = b; }
+bool hw_rx_pin(unsigned ch) { (void)ch; return line_level; }
 
 void hw_rx_enable(unsigned ch, bool en, bool invert)
 {
@@ -127,12 +131,20 @@ static void sim_advance(void)
     }
     while (tx_time < target) {
         /* falling edge at tx_time, then the pulse lasts p clocks */
-        uint32_t ts = (uint32_t)tx_time;
+        uint32_t ts = (uint32_t)tx_time, low = 0;
         push(2, ts);
         if (jumper) {
             push(0, ts + 3); /* a few ns of cable/filter delay */
         }
-        tx_time += sent_tx_next(tx, NULL);
+        uint32_t p = sent_tx_next(tx, &low);
+        if (both[2]) {
+            push(2, ts + low);
+        }
+        if (jumper && both[0]) {
+            push(0, ts + low + 3);
+        }
+        line_level = true;
+        tx_time += p;
     }
 }
 
