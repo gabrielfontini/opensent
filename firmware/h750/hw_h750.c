@@ -23,6 +23,7 @@
 
 #include "clock.h"
 #include "hw.h"
+#include "qspi_flash.h"
 
 #define TX_RING   32u    /* pulses in the TX DMA ring (two halves) */
 #define RX_RING   4096u  /* timestamps per capture ring (power of two) */
@@ -675,6 +676,79 @@ void hw_can_status(uint32_t *tec, uint32_t *rec, uint32_t *psr)
     *psr = s_can_on ? FDCAN1->PSR : 0u;
 }
 
+/* ------------------------------------------------------------ config
+ * 4 KB sector 0 of the QSPI flash: "OSC1", length, CRC32, script text */
+static uint32_t s_jedec;
+static char s_cfg_info[48];
+#define CFG_MAGIC 0x3143534Fu /* "OSC1" */
+
+static uint32_t crc32(const uint8_t *p, unsigned n)
+{
+    uint32_t c = 0xFFFFFFFFu;
+    while (n--) {
+        c ^= *p++;
+        for (int k = 0; k < 8; k++) {
+            c = (c >> 1) ^ (0xEDB88320u & (0u - (c & 1u)));
+        }
+    }
+    return ~c;
+}
+
+const char *hw_cfg_info(void)
+{
+    if (s_jedec) {
+        snprintf(s_cfg_info, sizeof s_cfg_info, "QSPI:%06lX", (unsigned long)s_jedec);
+    } else {
+        snprintf(s_cfg_info, sizeof s_cfg_info, "none");
+    }
+    return s_cfg_info;
+}
+
+int hw_cfg_load(char *buf, unsigned max)
+{
+    uint32_t h[3];
+    if (!s_jedec || !qspi_flash_read(0, h, sizeof h) || h[0] != CFG_MAGIC || h[1] > max || h[1] > 4096u - 12u) {
+        return -1;
+    }
+    if (!qspi_flash_read(12, buf, h[1]) || crc32((const uint8_t *)buf, h[1]) != h[2]) {
+        return -1;
+    }
+    return (int)h[1];
+}
+
+bool hw_cfg_store(const char *buf, unsigned len)
+{
+    if (!s_jedec || len > 4096u - 12u) {
+        return false;
+    }
+    uint32_t h[3] = {CFG_MAGIC, len, crc32((const uint8_t *)buf, len)};
+    IWDG1->KR = 0xAAAAu;
+    if (!qspi_flash_erase4k(0)) {
+        return false;
+    }
+    if (len == 0) {
+        return true; /* erased = no script */
+    }
+    IWDG1->KR = 0xAAAAu;
+    if (!qspi_flash_write(12, buf, len) || !qspi_flash_write(0, h, sizeof h)) {
+        return false;
+    }
+    uint32_t v[3];
+    return qspi_flash_read(0, v, sizeof v) && memcmp(v, h, sizeof h) == 0;
+}
+
+bool hw_boot_skip(void)
+{
+    /* K1 (PC13, pressed = high) held while powering up or resetting */
+    RCC->AHB4ENR |= RCC_AHB4ENR_GPIOCEN;
+    (void)RCC->AHB4ENR;
+    GPIOC->MODER &= ~(3u << 26);
+    GPIOC->PUPDR = (GPIOC->PUPDR & ~(3u << 26)) | (2u << 26);
+    for (volatile int i = 0; i < 1000; i++) {
+    }
+    return (GPIOC->IDR >> 13) & 1u;
+}
+
 /* ------------------------------------------------------------ boot */
 
 void hw_bootloader(void)
@@ -784,6 +858,7 @@ void hw_init(void)
     DAC1->DHR12R2 = 0;
     DAC1->CR = DAC_CR_EN1 | DAC_CR_EN2;
     adc_init();
+    s_jedec = qspi_flash_init();
     iwdg_start();
 
     NVIC_SetPriority(EXTI15_10_IRQn, 0);

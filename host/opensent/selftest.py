@@ -297,12 +297,55 @@ class SelfTest:
         data = rx.split("data=")[1] if "data=" in rx else ""
         self._check("CAN gateway flags sensor loss", data[8:10] == "00" and data[:8] == "00000000", rx)
 
+    def test_autostart(self) -> None:
+        """Startup script survives a reset (QSPI flash) and configures the board."""
+        d = self.dev
+        info = parse_can(d.query("CFG:INFO?"))
+        if not d.query("SYST:WDTEST?" if False else "HELP?").count("SYST:WDTEST") or info.get("store") == "SIM-RAM":
+            # simulator: just check the store round trip
+            d.cmd("CFG:CLR")
+            d.cmd("CFG:ADD TX:TICK 4")
+            d.cmd("CFG:SAVE")
+            d.cmd("CFG:CLR")
+            d.cmd("CFG:LOAD")
+            self._check("startup script store", d.query("CFG:LIST?") == "TX:TICK 4", d.query("CFG:INFO?"))
+            d.cmd("CFG:CLR")
+            d.cmd("CFG:SAVE")
+            return
+        d.reset()
+        d.cmd("CFG:CLR")
+        for c in ("TX:FC1 777", "TX:STATE ON", "RX2:STATE ON", "BRIDGE1:MAP RX2,FC1,0,4095,0,3.3",
+                  "BRIDGE1:STATE ON"):
+            d.cmd("CFG:ADD " + c)
+        d.cmd("CFG:SAVE")
+        port = d.port
+        d.ser.write(b"SYST:WDTEST\n")  # hang -> watchdog reset -> autostart
+        d.close()
+        time.sleep(1.5)
+        from .device import Device
+        for _ in range(50):
+            try:
+                self.dev = d = Device(port)
+                break
+            except Exception:  # noqa: BLE001
+                time.sleep(0.1)
+        time.sleep(0.3)
+        info = d.query("CFG:INFO?")
+        out = d.query("BRIDGE1:OUT?").split(",")
+        last = d.rx_last(2)
+        ok = "boot=ran" in info and d.query("TX:STATE?") == "1" and last.get("fc1") == 777 and \
+            out[1] == "OK" and abs(float(out[0]) - 777 / 4095 * 3.3) < 0.01
+        self._check("watchdog reset + autostart from flash", ok,
+                    "%s; fc1=%s bridge=%s" % (info, last.get("fc1"), ",".join(out)))
+        d.cmd("CFG:CLR")
+        d.cmd("CFG:SAVE")
+
     def run(self) -> Report:
         idn = self.dev.idn()
         self.log("OpenSENT self test on %s (%s), channels %s" % (self.dev.port, idn.split(",")[1],
                                                                 ",".join("RX%d" % c for c in self.chans)))
         for t in (self.test_counter, self.test_ticks, self.test_clock_error, self.test_crc_modes,
-                  self.test_formats, self.test_pauses, self.test_slow, self.test_faults, self.test_rx_tick_config, self.test_bridge, self.test_capture, self.test_pulltest, self.test_can):
+                  self.test_formats, self.test_pauses, self.test_slow, self.test_faults, self.test_rx_tick_config, self.test_bridge, self.test_capture, self.test_pulltest, self.test_can, self.test_autostart):
             self.log("%s: %s" % (t.__name__[5:], (t.__doc__ or "").strip().splitlines()[0] if t.__doc__ else ""))
             t()
         self.dev.reset()

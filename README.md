@@ -14,6 +14,7 @@ OpenSENT puts the whole workflow on one WeAct STM32H750 core board and a USB cab
 | **Raw capture** | Two-edge capture of a SENT line, exported as VCD/CSV for PulseView. |
 | **PulseView decoder** | A SENT protocol decoder for sigrok / PulseView (libsigrokdecode does not ship one). |
 | **SENT → analog bridge** | Maps a decoded fast channel to a DAC voltage (0–3.3 V, scalable to 0–5 V), with a fail-safe voltage on sensor loss. It lets an aftermarket ECU read a SENT-only sensor. The output is measured back on chip. |
+| **Standalone mode** | A startup script stored in the board's QSPI flash brings the bridge, gateway or emulator up at power-on without a PC. A 0.5 s hardware watchdog turns every output off if the firmware ever hangs. |
 | **Sensor health report** | `opensent report` turns a capture (from the board or a logic-analyzer file) into an HTML page. It covers tick accuracy and jitter, nibble timing margin, low time, frame rate, error breakdown, signal plots, and the serial messages with their usual J2716 meaning. |
 | **Tools** | Python CLI and library, an offline decoder for logic-analyzer exports, a Web Serial console (no install), and a host simulator for development without hardware. |
 
@@ -37,10 +38,11 @@ OpenSENT self test on /dev/ttyACM0 (WeAct-H750), channels RX2
   PASS  bridge fail-safe on sensor loss    commanded=0.2500 measured=0.2491 state=FAIL
   PASS  CAN gateway frames (loopback)      id=0x5A0 len=8 data=04D20C8A8000F001, 200 frames/s, drops=0
   PASS  CAN gateway flags sensor loss      id=0x5A0 len=8 data=0000000000000F97
+  PASS  watchdog reset + autostart from flash store=QSPI:EF4017 lines=5 bytes=86 boot=ran; fc1=777 bridge=0.6262,OK,0.6255
   PASS  RX2 capture -> PC decode           edges=4000 frames=221 ok=221 gaps=0 low=5.00 ticks
   PASS  RX0 capture path (pull bit-bang)   frames=299 ok=299 in-order=True tick=4998.8ns
   PASS  RX1 capture path (pull bit-bang)   frames=299 ok=299 in-order=True tick=4998.8ns
-PASS: 42/42 checks passed
+PASS: 43/43 checks passed
 ```
 
 How it works without wires:
@@ -104,6 +106,12 @@ Read a real sensor on PA0, bridge throttle position to 0.5–3.0 V, and fall bac
 
 ```bash
 opensent bridge 1 --ch 0 --sig FC1 --in 0 4095 --out 0.5 3.0 --fail 0.25 100
+```
+
+Make it standalone (the configuration is stored in flash and runs at power-up; hold K1 to skip it):
+
+```bash
+opensent autostart --set "RX0:STATE ON" "BRIDGE1:MAP RX0,FC1,0,4095,0.5,3.0" "BRIDGE1:STATE ON" --run
 ```
 
 Put a SENT sensor on CAN (500 kbit/s, ID 0x5A0, every 10 ms):

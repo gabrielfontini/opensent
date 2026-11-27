@@ -23,6 +23,7 @@
 #define RAW_KEEP   64u
 #define LINE_MAX   200u
 #define OUT_MAX    1024u
+#define VMAX       ((double)hw_dac_max() + 1e-4) /* float 3.3f < double 3.3 */
 
 typedef struct {
     bool         en, inv;
@@ -60,6 +61,13 @@ static struct {
     uint32_t ovr;       /* edges lost while capturing (capture unusable) */
     uint32_t d[CAP_MAX]; /* intervals between consecutive edges (clocks) */
 } CAP;
+
+/* startup script (non-volatile, executed at power-up) */
+static struct {
+    char     text[2048];
+    unsigned len;
+    char     status[24];
+} SCRIPT;
 
 /* SENT -> CAN gateway: one mapping per receive channel */
 static struct {
@@ -272,10 +280,13 @@ static void defaults(void)
     S.last_err = 0;
 }
 
+static void autostart(void);
+
 void app_init(void)
 {
     memset(&S, 0, sizeof S);
     defaults();
+    autostart();
 }
 
 /* ------------------------------------------------------- formatting */
@@ -895,7 +906,7 @@ static err_t cmd_bridge(cmd_t *c, const char *sub)
             if (!parse_num(av[2 + i], &v[i])) return E_DATA;
         }
         if (v[0] == v[1]) return E_ILLEGAL;
-        if (v[2] < 0 || v[3] < 0 || v[2] > hw_dac_max() || v[3] > hw_dac_max()) return E_RANGE;
+        if (v[2] < 0 || v[3] < 0 || v[2] > VMAX || v[3] > VMAX) return E_RANGE;
         b->ch = (uint8_t)chn;
         b->sig = (uint8_t)s;
         b->in_min = (float)v[0];
@@ -911,7 +922,7 @@ static err_t cmd_bridge(cmd_t *c, const char *sub)
         }
         unsigned k = split(c->arg, av, 3);
         if (k != 2 || !parse_num(av[0], &v[0]) || !parse_num(av[1], &v[1])) return E_MISSING;
-        if (v[0] < 0 || v[0] > hw_dac_max() || v[1] < 1 || v[1] > 60000) return E_RANGE;
+        if (v[0] < 0 || v[0] > VMAX || v[1] < 1 || v[1] > 60000) return E_RANGE;
         b->fail_v = (float)v[0];
         b->timeout_ms = (uint32_t)v[1];
         return E_OK;
@@ -1026,6 +1037,63 @@ static err_t cmd_can(cmd_t *c, const char *sub)
     return E_UNDEF;
 }
 
+static unsigned script_lines(void)
+{
+    unsigned n = 0;
+    for (unsigned i = 0; i < SCRIPT.len; i++) {
+        n += SCRIPT.text[i] == '\n';
+    }
+    return n;
+}
+
+static err_t cmd_cfg(cmd_t *c, const char *sub)
+{
+    if (ieq(sub, "ADD")) {
+        if (need_arg(c)) return E_MISSING;
+        size_t n = strlen(c->arg);
+        char up[8];
+        for (int i = 0; i < 7; i++) up[i] = (char)toupper((unsigned char)c->arg[i]);
+        up[7] = 0;
+        if (!strncmp(up, "CFG:", 4) || !strncmp(up, "SYST:", 5) || !strncmp(up, ":CFG", 4)) return E_ILLEGAL;
+        if (SCRIPT.len + n + 1 > sizeof SCRIPT.text || n > LINE_MAX) return E_RANGE;
+        memcpy(SCRIPT.text + SCRIPT.len, c->arg, n);
+        SCRIPT.len += (unsigned)n;
+        SCRIPT.text[SCRIPT.len++] = '\n';
+        return E_OK;
+    }
+    if (ieq(sub, "CLR")) {
+        SCRIPT.len = 0;
+        return E_OK;
+    }
+    if (ieq(sub, "SAVE")) {
+        return hw_cfg_store(SCRIPT.text, SCRIPT.len) ? E_OK : E_STATE;
+    }
+    if (ieq(sub, "LOAD")) {
+        int n = hw_cfg_load(SCRIPT.text, sizeof SCRIPT.text);
+        SCRIPT.len = n < 0 ? 0u : (unsigned)n;
+        return n < 0 ? E_STATE : E_OK;
+    }
+    if (ieq(sub, "LIST") && c->query) {
+        if (!SCRIPT.len) {
+            outf("EMPTY");
+        }
+        for (unsigned i = 0; i < SCRIPT.len; i++) {
+            char ch = SCRIPT.text[i];
+            if (ch == '\n') {
+                if (i + 1 < SCRIPT.len) outf(" | ");
+            } else {
+                outf("%c", ch);
+            }
+        }
+        return E_OK;
+    }
+    if (ieq(sub, "INFO") && c->query) {
+        outf("store=%s lines=%u bytes=%u boot=%s", hw_cfg_info(), script_lines(), SCRIPT.len, SCRIPT.status);
+        return E_OK;
+    }
+    return E_UNDEF;
+}
+
 static err_t execute(char *s)
 {
     while (*s == ' ' || *s == ':') {
@@ -1074,7 +1142,8 @@ static err_t execute(char *s)
              "RXn:STATE[?],RXn:POL[?],RXn:TICK[?],RXn:NIB[?],RXn:CRC[?],RXn:FMT[?],RXn:PAUSE[?],RXn:CLR,"
              "RXn:LAST?,RXn:VAL?,RXn:STAT?,RXn:SLOW?,RXn:RAW?,RXn:CAP[?],RXn:CAP:DATA?,RXn:PULLTEST,"
              "BRIDGEn:STATE[?],BRIDGEn:MAP[?],BRIDGEn:FAIL[?],BRIDGEn:OUT?,DACn[?],DACn:MEAS?,"
-             "CAN:STATE[?],CAN:BITRATE[?],CAN:MODE[?],CAN:MAP[?],CAN:SEND,CAN:STAT?,CAN:RX?");
+             "CAN:STATE[?],CAN:BITRATE[?],CAN:MODE[?],CAN:MAP[?],CAN:SEND,CAN:STAT?,CAN:RX?,"
+             "CFG:ADD,CFG:CLR,CFG:LIST?,CFG:SAVE,CFG:LOAD,CFG:INFO?");
         return E_OK;
     }
     if (ieq(c.hdr, "PINS") && c.query) {
@@ -1128,6 +1197,13 @@ static err_t execute(char *s)
         }
         return e;
     }
+    if ((sub = node(&c, "CFG")) != NULL && c.idx < 0) {
+        err_t e = cmd_cfg(&c, sub);
+        if (e == E_OK && !c.query) {
+            outf("OK");
+        }
+        return e;
+    }
     if ((sub = node(&c, "CAN")) != NULL && c.idx < 0) {
         err_t e = cmd_can(&c, sub);
         if (e == E_OK && !c.query) {
@@ -1154,7 +1230,7 @@ static err_t execute(char *s)
             return E_OK;
         }
         if (!parse_num(c.arg, &v)) return E_DATA;
-        if (v < 0 || v > hw_dac_max()) return E_RANGE;
+        if (v < 0 || v > VMAX) return E_RANGE;
         if (S.br[c.idx - 1].en) return E_STATE;
         S.br[c.idx - 1].out = (float)v;
         hw_dac((unsigned)c.idx - 1, (float)v);
@@ -1164,7 +1240,8 @@ static err_t execute(char *s)
     return E_UNDEF;
 }
 
-void app_line(char *line)
+/* run one line; the reply is left in out[]. Returns the first error. */
+static err_t process_line(char *line)
 {
     out_len = 0;
     out[0] = '\0';
@@ -1173,15 +1250,15 @@ void app_line(char *line)
         line[--n] = '\0';
     }
     if (n == 0) {
-        return;
+        return E_OK;
     }
     if (n > LINE_MAX) {
         outf("ERR %d,\"%s\"\n", E_OVERRUN, err_text(E_OVERRUN));
-        hw_write(out, (unsigned)out_len);
-        return;
+        return E_OVERRUN;
     }
     char *p = line;
     bool first = true;
+    err_t res = E_OK;
     while (p) {
         char *semi = strchr(p, ';');
         if (semi) {
@@ -1194,13 +1271,68 @@ void app_line(char *line)
         err_t e = execute(p);
         if (e != E_OK) {
             S.last_err = e;
+            res = e;
             outf("ERR %d,\"%s\"", e, err_text(e));
             break;
         }
         p = semi ? semi + 1 : NULL;
     }
     outf("\n");
-    hw_write(out, (unsigned)out_len);
+    return res;
+}
+
+void app_line(char *line)
+{
+    process_line(line);
+    if (out_len) {
+        hw_write(out, (unsigned)out_len);
+    }
+}
+
+/* run the startup script; returns 0 if every line succeeded, else the
+ * 1-based number of the first failing line */
+static int run_script(void)
+{
+    char line[LINE_MAX + 2];
+    const char *p = SCRIPT.text;
+    int no = 0;
+    while (p < SCRIPT.text + SCRIPT.len) {
+        const char *e = memchr(p, '\n', (size_t)(SCRIPT.text + SCRIPT.len - p));
+        size_t n = e ? (size_t)(e - p) : (size_t)(SCRIPT.text + SCRIPT.len - p);
+        no++;
+        if (n > LINE_MAX) {
+            return no;
+        }
+        memcpy(line, p, n);
+        line[n] = '\0';
+        if (process_line(line) != E_OK) {
+            return no;
+        }
+        p += n + 1;
+    }
+    return 0;
+}
+
+static void autostart(void)
+{
+    int n = hw_cfg_load(SCRIPT.text, sizeof SCRIPT.text);
+    if (n < 0) {
+        SCRIPT.len = 0;
+        snprintf(SCRIPT.status, sizeof SCRIPT.status, "none");
+        return;
+    }
+    SCRIPT.len = (unsigned)n;
+    if (hw_boot_skip()) {
+        snprintf(SCRIPT.status, sizeof SCRIPT.status, "skipped");
+        return;
+    }
+    int bad = run_script();
+    out_len = 0;
+    if (bad) {
+        snprintf(SCRIPT.status, sizeof SCRIPT.status, "error@%d", bad);
+    } else {
+        snprintf(SCRIPT.status, sizeof SCRIPT.status, "ran");
+    }
 }
 
 /* ---------------------------------------------------------- runtime */

@@ -151,3 +151,32 @@ Payload (8 bytes, big endian):
 | 7 | age of the data in ms (saturated at 255) |
 
 When the sensor is lost, FC1, FC2 and the valid bit go to 0 while the messages keep coming. A receiving ECU or logger can then tell "sensor fault" apart from "gateway dead".
+
+## Startup script (standalone operation)
+
+The board can run without a PC, as a SENT → analog / CAN converter or as a sensor emulator. A list of commands is stored in the on-board QSPI NOR flash (W25Q64, 4 KB sector 0, protected by a CRC32) and runs at every power-up.
+
+| Command | Description |
+|---|---|
+| `CFG:ADD <command>` | append one command (no `;`; `CFG:` and `SYST:` commands are refused) to the script in RAM |
+| `CFG:CLR` | empty the script in RAM |
+| `CFG:LIST?` | the script, lines separated by ` \| ` (`EMPTY` if none) |
+| `CFG:SAVE` | write the RAM script to flash (an empty script erases it) |
+| `CFG:LOAD` | read the flash script back into RAM |
+| `CFG:INFO?` | `store=QSPI:<JEDEC id> lines= bytes= boot=none\|ran\|skipped\|error@<line>` |
+
+Hold **K1** while powering up or resetting to skip the script, e.g. to recover from a bad configuration. Example: turn the board into a throttle-sensor converter that comes up on its own:
+
+```text
+CFG:CLR
+CFG:ADD RX0:STATE ON
+CFG:ADD RX0:NIB 6
+CFG:ADD BRIDGE1:MAP RX0,FC1,193,3896,0.333,3.0
+CFG:ADD BRIDGE1:FAIL 0.1,100
+CFG:ADD BRIDGE1:STATE ON
+CFG:ADD CAN:MAP RX0,0x5A0,10
+CFG:ADD CAN:STATE ON
+CFG:SAVE
+```
+
+or from the PC: `opensent autostart --set "RX0:STATE ON" "BRIDGE1:STATE ON" ...`.

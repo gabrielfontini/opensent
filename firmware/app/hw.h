@@ -56,6 +56,12 @@ bool hw_can_send(uint32_t id, const uint8_t *d, uint8_t len);
 bool hw_can_recv(uint32_t *id, uint8_t *d, uint8_t *len);
 void hw_can_status(uint32_t *tec, uint32_t *rec, uint32_t *psr);
 
+/* non-volatile startup script (QSPI flash on the H750, a file in the sim) */
+const char *hw_cfg_info(void);
+int         hw_cfg_load(char *buf, unsigned max); /* bytes, or -1 if nothing valid stored */
+bool        hw_cfg_store(const char *buf, unsigned len);
+bool        hw_boot_skip(void); /* user asked to skip the startup script (button held) */
+
 void hw_bootloader(void);
 /* hang on purpose to prove the watchdog resets the board; false if unsupported */
 bool hw_watchdog_test(void);

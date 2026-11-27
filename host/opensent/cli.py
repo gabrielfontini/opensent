@@ -7,6 +7,7 @@
   opensent stat --ch 0                  receiver statistics
   opensent bridge 1 --ch 0 --sig FC1 --in 0 4095 --out 0.5 4.5 --fail 0 100
   opensent can --map 0 0x5A0 --period 10    SENT -> CAN gateway
+  opensent autostart --set "..." "..."  startup script in flash (standalone bridge)
   opensent selftest [--jumper]          end-to-end hardware verification
   opensent decode capture.csv|.vcd      offline decoder (no hardware)
   opensent synth out.vcd --fc1 ...      synthesize a SENT waveform file
@@ -179,6 +180,25 @@ def cmd_can(args) -> int:
         print(rx)
         if "data=" in rx and len(rx.split("data=")[1]) == 16:
             print(decode_can_payload(bytes.fromhex(rx.split("data=")[1])))
+    return 0
+
+
+def cmd_autostart(args) -> int:
+    """non-volatile startup script: makes the board a standalone bridge/emulator"""
+    with _dev(args) as d:
+        if args.set is not None or args.clear:
+            d.cmd("CFG:CLR")
+            for line in args.set or []:
+                for part in line.split(";"):  # CFG:ADD takes one command
+                    if part.strip():
+                        d.cmd("CFG:ADD " + part.strip())
+            d.cmd("CFG:SAVE")
+            if args.run:
+                for line in args.set or []:
+                    d.query(line)
+        print(d.query("CFG:INFO?"))
+        for i, line in enumerate(d.query("CFG:LIST?").split(" | "), 1):
+            print("  %2d  %s" % (i, line))
     return 0
 
 
@@ -408,6 +428,12 @@ def main(argv=None) -> int:
     p.add_argument("--loopback", action="store_true", help="internal loopback (no transceiver)")
     p.add_argument("--off", action="store_true")
     p.set_defaults(fn=cmd_can)
+
+    p = sub.add_parser("autostart", help="startup script stored in the board's flash (standalone use)")
+    p.add_argument("--set", nargs="*", metavar="CMD", help='commands, e.g. "RX0:STATE ON" "BRIDGE1:STATE ON"')
+    p.add_argument("--clear", action="store_true")
+    p.add_argument("--run", action="store_true", help="also apply the commands now")
+    p.set_defaults(fn=cmd_autostart)
 
     p = sub.add_parser("selftest", help="end-to-end verification on the hardware (or simulator)")
     p.add_argument("--jumper", action="store_true", help="TX (PB10) is wired to RX0 (PA0): test RX0 too")

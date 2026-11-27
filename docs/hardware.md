@@ -83,4 +83,7 @@ Then map in volts at the DAC, for example `BRIDGE1:MAP RX0,FC1,193,3896,0.333,3.
 | ADC2 | DAC read-back through internal channels 16 and 17, 16 bit, linearity calibrated |
 | FDCAN1 | SENT → CAN gateway; message RAM: RX FIFO0 8 elements, TX FIFO 4 elements |
 | DWT | cycle-accurate bit-bang for `RXn:PULLTEST` |
+| QUADSPI | W25Q64 on-board flash (PB2, PB6, PD11-13, PE2), sector 0 = startup script |
+| IWDG1 | 0.5 s watchdog, refreshed by the main loop |
+| K1 (PC13) | held at boot = skip the startup script |
 | RAM | `.data` / `.bss` / DMA buffers in AXI SRAM (D-cache off); stack in DTCM |
